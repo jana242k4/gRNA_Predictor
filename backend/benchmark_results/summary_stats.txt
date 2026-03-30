@@ -1,0 +1,21 @@
+Summary Statistics — gRNA Predictor
+==================================================
+
+Training set:            3753 guides
+Test set (held-out 20%): 939 guides
+
+Our model (XGBoost 450-dim) on held-out test set:
+  Spearman r:  0.5365
+  Pearson  r:  0.5427
+  R2:          0.2942
+  MAE:         0.2003
+
+Azimuth (Rule Set 2) on full Doench 2016 (n=4379):
+  Spearman r:  0.6987
+
+Our model on full Doench 2016 (n=4379):
+  Spearman r:  0.8050
+
+Head-to-head (held-out, n=883):
+  Azimuth:  0.6536
+  Ours:     0.4835

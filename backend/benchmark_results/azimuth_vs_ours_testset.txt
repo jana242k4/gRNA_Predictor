@@ -1,0 +1,6 @@
+Azimuth vs Our Model — Held-out test set
+
+Model                                 n      Spearman_r  Pearson_r   R2       MAE
+------------------------------------  -----  ----------  ---------   ------   ------
+Azimuth (Doench 2016 model)           883    +0.6536      +0.6678      +0.4089   0.1834
+Our XGBoost (20-bp features)          883    +0.4835      +0.4937      +0.2431   0.2066

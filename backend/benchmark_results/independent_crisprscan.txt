@@ -1,0 +1,6 @@
+Independent validation: CRISPRscan (Moreno-Mateos 2015, zebrafish)
+
+Model                                   n      Spearman_r  Pearson_r   R2       MAE
+--------------------------------------  -----  ----------  ---------   ------   ------
+Our XGBoost (444-dim, 30-mer context)   1020   +0.0737      +0.0748      -0.1471   0.2576
+Doench 2016 heuristic (GC+position)     1020   +0.0085      +0.0679      -0.6932   0.3060

@@ -1,0 +1,6 @@
+Azimuth vs Our Model — Full Doench 2016 dataset
+
+Model                                 n      Spearman_r  Pearson_r   R2       MAE
+------------------------------------  -----  ----------  ---------   ------   ------
+Azimuth (Doench 2016 model)           4379   +0.6987      +0.6978      +0.4455   0.1782
+Our XGBoost (20-bp features)          4379   +0.8050      +0.8006      +0.5947   0.1476

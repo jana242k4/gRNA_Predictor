@@ -1,0 +1,6 @@
+Independent validation: Chari 2015 (K562 cells)
+
+Model                                   n      Spearman_r  Pearson_r   R2       MAE
+--------------------------------------  -----  ----------  ---------   ------   ------
+Our XGBoost (444-dim, 30-mer context)   1239   -0.0428      -0.0540      -0.5639   0.1997
+Doench 2016 heuristic (GC+position)     1239   +0.0119      +0.0168      -8.8546   0.5576

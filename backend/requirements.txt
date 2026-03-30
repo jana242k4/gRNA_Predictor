@@ -1,0 +1,14 @@
+fastapi
+uvicorn[standard]
+pydantic
+pydantic-settings
+python-dotenv
+scikit-learn
+xgboost
+numpy
+scipy
+httpx
+pytest
+pytest-asyncio
+onnxmltools
+onnxruntime

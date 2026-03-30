@@ -1,0 +1,60 @@
+gRNA Predictor — Case Studies Report
+Targets: EMX1, VEGFA, DNMT1
+
+======================================================================
+EMX1 exon 3 (EMX1, chr2)
+Reference: Cong et al. 2013 Science 339:819; Doench et al. 2016 Nat Biotechnol 34:184
+
+EMX1 (Empty Spiracles Homeobox 1) was one of the first human genes
+targeted with CRISPR-Cas9. This 250-bp window contains the validated
+high-efficiency site used by Cong et al. 2013.
+
+  Rank  Guide Sequence         Efficiency Off-target   GC%
+  ----- ---------------------- ---------- ---------- -----
+  1     GATGTCACCTCCAATGACTA       0.4284     0.7170   45%
+  2     GGGCAACCACAAACCCACGA       0.3898     0.8600   60%
+  3     GCTCCCATCACATCAACCGG       0.3544     0.7230   60%
+  4     GACATCGATGTCCTCCCCAT       0.3518     0.6830   55%
+  5     TGGGCAACCACAAACCCACG       0.3466     0.7630   60%
+
+  Validated: GAGTCCGAGCAGAAGAAGAA  (paper=0.79, rank #6)
+  Source: Cong et al. 2013 (site #1 — highest efficiency in paper)
+
+======================================================================
+VEGFA exon 1 (VEGFA, chr6)
+Reference: Doench et al. 2016 Nat Biotechnol 34:184; Hsu et al. 2013 Nat Biotechnol 31:827
+
+VEGFA (Vascular Endothelial Growth Factor A) is a key therapeutic
+target. This region was used as a benchmark in Doench et al. 2016 to
+evaluate the Azimuth (Rule Set 2) model on human genes.
+
+  Rank  Guide Sequence         Efficiency Off-target   GC%
+  ----- ---------------------- ---------- ---------- -----
+  1     CAGCAGCAGCAGCAGCGGCA       0.2551     0.8300   70%
+  2     TGCTGCTGCTGCCGCTGCTG       0.1793     0.8300   70%
+  3     GCAGCAGCAGCAGCAGCGGC       0.1771     0.6300   75%
+  4     CCGCTGCTGCCGCCGCTGCC       0.1668     0.6970   85%
+  5     AGCAGCAGCAGCGGCAGGGG       0.1448     0.5330   75%
+
+  Validated: GGTGAGCCGGAGCAGAAGAA  (paper=0.72, not in top-10)
+  Source: Doench et al. 2016 (VEGFA site 2, high-efficiency validated guide)
+
+======================================================================
+DNMT1 exon 2 (DNMT1, chr19)
+Reference: Doench et al. 2014 Nat Biotechnol 32:1262
+
+DNMT1 (DNA Methyltransferase 1) is central to epigenetic
+maintenance. This region was used extensively in Doench et al. 2014
+(Rule Set 1) to validate guide RNA activity by GFP disruption
+assays.
+
+  Rank  Guide Sequence         Efficiency Off-target   GC%
+  ----- ---------------------- ---------- ---------- -----
+  1     GGTTCCGACTCGGACTCGGG       0.3530     0.4700   70%
+  2     TCGGGTTCCGACTCGGACTC       0.3463     0.7370   65%
+  3     CGCCCCGCCCGAGTCCGAGT       0.3146     0.6270   80%
+  4     CGAGTCGGAACCCGAGCTCC       0.3134     0.6870   70%
+  5     AGCGCGGCGCTGGAGGAGGG       0.2974     0.4500   80%
+
+  Validated: GACAATCGCGTCTCCTTCAC  (paper=0.68, not in top-10)
+  Source: Doench et al. 2014 (DNMT1 high-efficiency site)

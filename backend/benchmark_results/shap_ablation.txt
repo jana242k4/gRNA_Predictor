@@ -1,0 +1,18 @@
+Ablation Study: Effect of Zeroing Each Feature Group
+Baseline Spearman r = 0.5365  (n=939 held-out guides)
+
+Feature group                        Spearman_ablated  Delta
+-----------------------------------  ----------------  -----
+Dinucleotide freq.                   +0.4864            +0.0501
+Segmented Tm (3 windows)             +0.4871            +0.0494
+GC clamp (3' end)                    +0.4984            +0.0381
+Pos.-specific dinucs                 +0.4985            +0.0380
+Pos. one-hot (guide)                 +0.4988            +0.0377
+Downstream context (6bp)             +0.5063            +0.0302
+Melting Tm                           +0.5253            +0.0112
+GC content                           +0.5355            +0.0010
+RNA hairpin proxy                    +0.5361            +0.0005
+Microhomology                        +0.5361            +0.0004
+Poly-T flag                          +0.5365            +0.0000
+Seed GC                              +0.5372            -0.0007
+Upstream context (4bp)               +0.5386            -0.0021

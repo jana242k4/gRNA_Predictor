@@ -1,0 +1,14 @@
+Independent Cross-Dataset Validation
+Model trained on: Doench 2016 + Doench 2014 (combined_training_data.csv)
+
+Dataset                              n_all  n_novel  Spearman_all  Spearman_novel  Pearson_all  MAE_all
+-----------------------------------  -----  -------  ------------  --------------  -----------  -------
+Kim 2019 (novel only)                1828   1828     +0.6395        +0.6395          +0.6438       0.1853
+Chari 2015 (293T)                    10     10       +0.7697        +0.7697          +0.9124       0.2853
+Chari 2015 (K562)                    10     10       +0.7576        +0.7576          +0.8027       0.4415
+Chari 2015 (A549)                    10     10       +0.4788        +0.4788          +0.5646       0.4332
+Chari 2015 (HepG2)                   10     10       +0.5152        +0.5152          +0.4673       0.4429
+Chari 2015 (SKNAS)                   10     10       +0.7455        +0.7455          +0.6804       0.3886
+Chari 2015 (U2OS)                    10     10       +0.8061        +0.8061          +0.8134       0.3970
+Xu 2015 (human cells)                35     35       +0.4241        +0.4241          +0.3421       0.2796
+Moreno-Mateos 2015 (zebrafish)       1020   1020     +0.0814        +0.0814          +0.0879       0.2554
