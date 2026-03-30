@@ -164,6 +164,28 @@ def metrics(y_true, y_pred, name):
     return {"name": name, "spearman": sp, "pearson": pe, "r2": r2, "mae": mae, "n": len(y_true)}
 
 
+def precision_at_k(y_true, y_pred, k, threshold_pct=80):
+    """
+    Fraction of top-k predicted guides that exceed the threshold_pct-th percentile
+    of experimental efficiency.  Returns NaN when n < k.
+    """
+    if len(y_true) < k:
+        return float("nan")
+    threshold = np.percentile(y_true, threshold_pct)
+    top_k_idx = np.argsort(y_pred)[::-1][:k]
+    hits = sum(1 for i in top_k_idx if y_true[i] >= threshold)
+    return hits / k
+
+
+def _print_precision_at_k(y_true, y_pred, ks=(1, 3, 5, 10)):
+    """Print precision@k line (top-20% hit threshold)."""
+    parts = []
+    for k in ks:
+        p = precision_at_k(y_true, y_pred, k)
+        parts.append(f"P@{k}={p:.2f}" if p == p else f"P@{k}=n/a")
+    print(f"  Precision@k (top-20% threshold): {' | '.join(parts)}")
+
+
 def run():
     OUT_DIR.mkdir(parents=True, exist_ok=True)
 
@@ -188,6 +210,7 @@ def run():
         yp_kim = model.predict(X_kim).astype(np.float64)
         m_kim  = metrics(y_kim, yp_kim, f"Kim 2019 holdout (n={len(g_kim)})")
         print(f"  Spearman r (all):   {m_kim['spearman']:+.4f}  Pearson r: {m_kim['pearson']:+.4f}")
+        _print_precision_at_k(y_kim, yp_kim)
 
         # Novel-only: exclude guides whose sequence appeared in Doench training
         novel_mask = [g not in train_guides for g in g_kim]
@@ -248,6 +271,7 @@ def run():
         print(f"  Spearman r (novel guides): {m_novel['spearman']:+.4f}")
         if ci_note:
             print(f"  {ci_note}")
+        _print_precision_at_k(y_true, y_pred_all)
         all_results.append((name, m_all, m_novel))
         print()
 

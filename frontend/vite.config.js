@@ -6,9 +6,9 @@ export default defineConfig(({ command }) => ({
   // Use '/' for local dev, '/gRNA_Predictor/' for GitHub Pages production build
   base: command === 'build' ? '/gRNA_Predictor/' : '/',
   build: {
-    // onnxruntime-web copies its WASM backends into the build; suppress the
-    // size warning — these files are not loaded at runtime because wasmPaths
-    // in onnxPredictor.js points to the jsDelivr CDN instead.
+    // The 25 MB JSEP WASM asset is copied to dist/ but never loaded at runtime:
+    // onnxPredictor.js sets numThreads=1 (→ ORT selects ort-wasm-simd.wasm ~5 MB
+    // from CDN) and wasmPaths points to jsDelivr CDN, not the local copy.
     chunkSizeWarningLimit: 30000,
   },
   optimizeDeps: {

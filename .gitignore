@@ -22,3 +22,6 @@ dist/
 .idea/
 *.swp
 .DS_Store
+
+# Claude Code internal files
+.claude/

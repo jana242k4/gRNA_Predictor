@@ -82,6 +82,21 @@ def metrics(y_true, y_pred, name):
     return {"name": name, "spearman": sp, "pearson": pe, "r2": r2, "mae": mae, "n": len(y_true)}
 
 
+def precision_at_k(y_true, y_pred, k, threshold_pct=80):
+    """
+    Fraction of top-k predicted guides that exceed the threshold_pct-th percentile
+    of experimental efficiency.  E.g. P@5 answers: 'Of the 5 guides our model
+    ranks highest, how many are actually in the top-20% experimentally?'
+    Returns NaN when n < k.
+    """
+    if len(y_true) < k:
+        return float("nan")
+    threshold = np.percentile(y_true, threshold_pct)
+    top_k_idx = np.argsort(y_pred)[::-1][:k]
+    hits = sum(1 for i in top_k_idx if y_true[i] >= threshold)
+    return hits / k
+
+
 def run():
     OUT_DIR.mkdir(parents=True, exist_ok=True)
 
@@ -109,6 +124,9 @@ def run():
         metrics(y_exp, y_xgb,     "Our XGBoost (20-bp features)"),
     ]
     _print_table(rows_full)
+    _print_precision_table(
+        [("Azimuth", y_azimuth), ("Our XGBoost", y_xgb)], y_exp
+    )
 
     # ── COMPARISON 2: held-out 20% test set (our model never saw this) ───────
     # Reproduce our model's train/test split on the SAME sources used for training
@@ -156,6 +174,9 @@ def run():
             metrics(y_exp_test, y_xgb_test,     "Our XGBoost (20-bp features)"),
         ]
         _print_table(rows_test)
+        _print_precision_table(
+            [("Azimuth", y_azimuth_test), ("Our XGBoost", y_xgb_test)], y_exp_test
+        )
         _save_results(rows_test, "azimuth_vs_ours_testset.txt", "Held-out test set")
 
     _save_results(rows_full, "azimuth_vs_ours_full.txt", "Full Doench 2016 dataset")
@@ -226,6 +247,26 @@ def _print_table(rows):
     for r in rows:
         print(f"  {r['name']:<36}  {r['n']:<5}  {r['spearman']:+.4f}      "
               f"{r['pearson']:+.4f}      {r['r2']:+.4f}   {r['mae']:.4f}")
+
+
+def _print_precision_table(model_preds, y_true, ks=(1, 3, 5, 10)):
+    """Print precision@k table for each model.
+
+    P@k = fraction of top-k predicted guides that are in the top-20%
+    experimentally.  Answers the practical question: 'If I pick the top k
+    guides from this tool, how often do I get a high-efficiency guide?'
+    """
+    print(f"\n  Precision@k  (top-20% experimental efficiency as 'hit' threshold)")
+    header = f"  {'Model':<36}" + "".join(f"  P@{k:<3}" for k in ks)
+    print(header)
+    print(f"  {'-'*36}" + "".join(f"  -----" for _ in ks))
+    for name, y_pred in model_preds:
+        row = f"  {name:<36}"
+        for k in ks:
+            p = precision_at_k(y_true, y_pred, k)
+            row += f"  {p:.3f}" if not (p != p) else f"  {'n/a':<5}"  # nan check
+        print(row)
+    print()
 
 
 def _save_results(rows, filename, subtitle):

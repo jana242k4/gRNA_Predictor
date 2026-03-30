@@ -23,8 +23,13 @@ Biological justification for σ = 50 bp:
   - Sensitivity analysis (compare_azimuth.py) confirms ranking order is robust
     to σ ∈ {25, 50, 100} bp for typical use cases.
 
-Combined score = (1 − w) × efficiency + w × proximity
-  where w = request.proximity_weight (default 0.4)
+Scoring formula (multi-objective):
+  eff_adj  = efficiency × specificity          (off-target penalty applied)
+  Without target: combined_score = eff_adj
+  With target:    combined_score = (1−w) × eff_adj + w × proximity
+    where w = request.proximity_weight (default 0.4)
+
+Ranking is always by combined_score (incorporates off-target risk in all modes).
 """
 import math
 from fastapi import APIRouter, HTTPException
@@ -100,21 +105,25 @@ def predict_grnas(request: PredictRequest):
     for c in scored:
         cs            = _cut_site(c, request.pam)
         c["cut_site"] = cs
-        c["off_target_score"] = round(specificity_score(c["sequence"]), 3)
+        spec = specificity_score(c["sequence"])
+        c["off_target_score"] = round(spec, 3)
+
+        # Efficiency adjusted by off-target specificity (multiplicative penalty)
+        eff_adj = c["score"] * spec
 
         if target is not None:
             dist                    = abs(cs - target)
             c["distance_to_target"] = dist
             c["combined_score"]     = round(
-                (1.0 - w) * c["score"] + w * _proximity_score(dist), 4
+                (1.0 - w) * eff_adj + w * _proximity_score(dist), 4
             )
         else:
             c["distance_to_target"] = None
-            c["combined_score"]     = None
+            # No target: rank by specificity-adjusted efficiency
+            c["combined_score"]     = round(eff_adj, 4)
 
-    # Rank by combined score when target given, else by efficiency score
-    sort_key = "combined_score" if target is not None else "score"
-    ranked   = sorted(scored, key=lambda x: x[sort_key], reverse=True)[: request.top_n]
+    # Always rank by combined_score (incorporates off-target risk in all modes)
+    ranked = sorted(scored, key=lambda x: x["combined_score"], reverse=True)[: request.top_n]
 
     results = [
         GRNAResult(
