@@ -165,7 +165,13 @@ export async function predictOffline(
     try {
       const modelUrl  = `${modelBase}xgb_model.onnx`
       const sequences = candidates.map(c => c.sequence)
-      const thirtyMers = candidates.map(() => '')
+      // Extract 30-mer context: 4 bp upstream + 20 bp guide + 6 bp downstream
+      const thirtyMers = candidates.map(c => {
+        const start = c.position - 4
+        const end   = c.position + 20 + 6
+        if (start < 0 || end > seq.length) return ''
+        return seq.slice(start, end)
+      })
       rawScores = await runInWorker(sequences, thirtyMers, modelUrl)
     } catch (err) {
       console.warn('[gRNA Predictor] ONNX worker failed, using heuristic:', err.message)
