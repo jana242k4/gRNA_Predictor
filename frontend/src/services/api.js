@@ -3,9 +3,15 @@ import { predictOffline } from '../utils/onnxPredictor.js'
 
 const BASE_URL = import.meta.env.VITE_API_BASE_URL || 'http://localhost:8000/api/v1'
 
+// On GitHub Pages (HTTPS) the local backend is never available.
+// Skip the network call entirely to avoid a 60-second mixed-content hang.
+const IS_STATIC_HOST = typeof window !== 'undefined' &&
+  (window.location.hostname.endsWith('.github.io') ||
+   window.location.protocol === 'file:')
+
 const apiClient = axios.create({
   baseURL: BASE_URL,
-  timeout: 60000,
+  timeout: 4000,   // 4 s — fall back to ONNX quickly if backend unreachable
   headers: { 'Content-Type': 'application/json' },
 })
 
@@ -37,11 +43,20 @@ export async function predictGRNAs(
     body.target_position = parseInt(targetPosition, 10)
   }
 
+  // Skip network call entirely on static hosts (GitHub Pages etc.)
+  if (IS_STATIC_HOST) {
+    const tgt = body.target_position ?? null
+    return predictOffline(
+      body.sequence, pam, topN, tgt, proximityWeight,
+      import.meta.env.BASE_URL || '/'
+    )
+  }
+
   try {
     const response = await apiClient.post('/predict', body)
     return response.data
   } catch (_err) {
-    // Backend unreachable — use in-browser ONNX (GitHub Pages / offline mode)
+    // Backend unreachable — use in-browser ONNX (offline / local with no server)
     console.info('[gRNA Predictor] Backend unavailable — using in-browser ONNX inference')
     const tgt = body.target_position ?? null
     return predictOffline(

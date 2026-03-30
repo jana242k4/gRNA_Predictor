@@ -5,17 +5,19 @@
 
 **Live demo → [jana242k4.github.io/gRNA_Predictor](https://jana242k4.github.io/gRNA_Predictor)**
 
-AI-powered CRISPR guide RNA (sgRNA) designer with XGBoost-based efficiency prediction and **Gaussian proximity-weighted ranking** — runs entirely in the browser via ONNX, no server required.
+AI-powered CRISPR guide RNA (sgRNA) designer with XGBoost-based efficiency prediction, **off-target specificity scoring**, and **Gaussian proximity-weighted ranking** — runs entirely in the browser via ONNX Web Worker, no server required.
 
 ---
 
 ## Features
 
 - **XGBoost ML scoring** — 450-dimensional feature model trained on 4,692 experimental guides (Doench 2016 + 2014)
-- **Novel proximity ranking** — guides re-ranked by Gaussian decay from a user-specified genomic target; optimises the efficiency–proximity tradeoff via adjustable weight *w*
+- **Multi-objective ranking** — `combined_score = efficiency × specificity × proximity_weight`; off-target risk penalises efficiency multiplicatively
+- **Novel proximity ranking** — guides re-ranked by Gaussian decay from a user-specified genomic target; adjustable weight *w* optimises the efficiency–proximity tradeoff
+- **Off-target specificity** — sequence-intrinsic heuristic (seed AT content, GC runs, hairpin, G-quadruplex) following Hsu 2013 / Doench 2016
 - **Multi-PAM support** — SpCas9 (NGG/NAG), SaCas9 (NNGRRT), Cas12a (TTTV)
 - **Both strands** — detects guides on forward and reverse complement
-- **Runs offline** — in-browser ONNX inference when no local backend is running
+- **Runs offline** — ONNX inference in a Web Worker (non-blocking); heuristic fallback if WASM unavailable
 
 ---
 
@@ -46,13 +48,20 @@ AI-powered CRISPR guide RNA (sgRNA) designer with XGBoost-based efficiency predi
 
 ## Novelty
 
-**Gaussian proximity-weighted guide ranking** is the key novel contribution. No existing tool (Azimuth, CRISPRscan, CRISPOR, CHOPCHOP) automates this step:
+**Multi-objective scoring** integrates three components no existing tool combines automatically:
 
 ```
-combined_score = (1 − w) × efficiency + w × exp(−d² / 2σ²)
+eff_adj       = ML_efficiency × specificity_score
+combined_score = (1 − w) × eff_adj + w × exp(−d² / 2σ²)
 ```
 
-where *d* = distance from guide cut site to desired edit position, σ = 50 bp (Paquet 2016; Richardson 2016), and *w* is user-tunable. CRISPOR shows distances visually; this tool **quantifies and optimises the tradeoff automatically**.
+where *d* = distance from guide cut site to desired edit position, σ = 50 bp (Paquet 2016; Richardson 2016), and *w* is user-tunable (default 0.4).
+
+- **Azimuth / Doench** — predict efficiency only; no specificity or proximity integration
+- **CRISPRscan** — shows distances visually; does not compute a weighted combined score
+- **CRISPOR / CHOPCHOP** — list off-target sites separately; do not weight efficiency × specificity × proximity in one ranking
+
+This tool **quantifies and optimises the efficiency–specificity–proximity tradeoff automatically** in a single ranked output.
 
 ---
 
@@ -140,8 +149,10 @@ gRNA_Predictor/
 │       ├── utils/
 │       │   ├── featureEngineering.js  # 450-dim JS port
 │       │   ├── sequenceParser.js      # PAM detection JS port
-│       │   └── onnxPredictor.js       # ONNX Runtime Web wrapper
-│       └── services/api.js            # API with ONNX fallback
+│       │   └── onnxPredictor.js       # ONNX orchestrator + specificity scorer
+│       ├── workers/
+│       │   └── onnxWorker.js          # Web Worker: ONNX inference off main thread
+│       └── services/api.js            # API with static-host detection + ONNX fallback
 └── .github/workflows/
     ├── deploy.yml                   # GitHub Pages auto-deploy
     └── test.yml                     # Backend pytest CI
