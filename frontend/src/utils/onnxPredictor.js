@@ -47,6 +47,18 @@ function runInWorker(sequences, thirtyMers, modelUrl) {
   return new Promise((resolve, reject) => {
     const id = _reqId++
     _pending.set(id, { resolve, reject })
+    // 30-second timeout — if ONNX/WASM hangs, fall back to heuristic
+    const timer = setTimeout(() => {
+      if (_pending.has(id)) {
+        _pending.delete(id)
+        reject(new Error('ONNX inference timeout (30 s)'))
+      }
+    }, 30000)
+    const { resolve: origResolve, reject: origReject } = _pending.get(id)
+    _pending.set(id, {
+      resolve: (v) => { clearTimeout(timer); origResolve(v) },
+      reject:  (e) => { clearTimeout(timer); origReject(e) },
+    })
     getWorker().postMessage({ requestId: id, sequences, thirtyMers, modelUrl })
   })
 }
