@@ -1,71 +1,21 @@
 /**
- * In-browser XGBoost inference via ONNX Runtime Web.
- * Used as a fallback when the local FastAPI backend is unreachable
- * (e.g. when running on GitHub Pages).
+ * In-browser gRNA prediction — pure JavaScript, zero WebAssembly.
  *
- * ONNX inference runs inside a Web Worker to keep the main thread responsive.
- * If the worker fails (OOM, WASM unsupported), falls back to a GC heuristic.
+ * Uses a pre-exported XGBoost tree structure (xgb_trees.json, 294 KB) for
+ * accurate ML scoring with no WASM, no Workers, and no memory spikes.
+ * Falls back to a GC heuristic if the JSON model fails to load.
  */
 import { findAllGRNAs } from './sequenceParser.js'
-
-// Vite's ?worker suffix compiles the file as a module worker
-import OnnxWorker from '../workers/onnxWorker.js?worker'
+import { extractFeaturesBatch } from './featureEngineering.js'
+import { xgbPredict } from './xgbPredictor.js'
 
 const SIGMA           = 50.0
 const CAS12A_PAMS     = new Set(['TTTV'])
 const MAX_CANDIDATES  = 200
-const MODEL_INFO_TEXT = 'XGBoost 450-dim (in-browser ONNX) — Doench 2016 + 2014, n=4,692'
-
-let _worker      = null
-let _reqId       = 0
-let _pending     = new Map()   // reqId → { resolve, reject }
-let _onnxFailed  = false
-
-function getWorker() {
-  if (_worker) return _worker
-  _worker = new OnnxWorker()
-  _worker.onmessage = ({ data }) => {
-    const handler = _pending.get(data.requestId)
-    _pending.delete(data.requestId)
-    if (!handler) return
-    if (data.error) handler.reject(new Error(data.error))
-    else            handler.resolve(data.scores)
-  }
-  _worker.onerror = (err) => {
-    // Terminate worker on unrecoverable error; flag for heuristic fallback
-    console.warn('[gRNA Predictor] Worker error:', err.message)
-    _onnxFailed = true
-    for (const { reject } of _pending.values()) reject(new Error(err.message))
-    _pending.clear()
-    _worker.terminate()
-    _worker = null
-  }
-  return _worker
-}
-
-function runInWorker(sequences, thirtyMers, modelUrl) {
-  return new Promise((resolve, reject) => {
-    const id = _reqId++
-    _pending.set(id, { resolve, reject })
-    // 30-second timeout — if ONNX/WASM hangs, fall back to heuristic
-    const timer = setTimeout(() => {
-      if (_pending.has(id)) {
-        _pending.delete(id)
-        reject(new Error('ONNX inference timeout (30 s)'))
-      }
-    }, 30000)
-    const { resolve: origResolve, reject: origReject } = _pending.get(id)
-    _pending.set(id, {
-      resolve: (v) => { clearTimeout(timer); origResolve(v) },
-      reject:  (e) => { clearTimeout(timer); origReject(e) },
-    })
-    getWorker().postMessage({ requestId: id, sequences, thirtyMers, modelUrl })
-  })
-}
+const MODEL_INFO_TEXT = 'XGBoost 450-dim (in-browser JS) — Doench 2016 + 2014, n=4,692'
 
 // ---------------------------------------------------------------------------
-// Off-target specificity heuristic — JS port of backend/app/services/off_target.py
-// Returns float in [0.0, 1.0]: 1.0 = highly specific, 0.0 = high off-target risk
+// Off-target specificity heuristic
 // ---------------------------------------------------------------------------
 function _reverseComplement(seq) {
   const comp = { A: 'T', T: 'A', C: 'G', G: 'C' }
@@ -137,19 +87,6 @@ function heuristicScores(candidates) {
 }
 
 /**
- * Pre-warm the ONNX Worker by loading the session before the first prediction.
- * Call this on app mount so WASM is compiled in the background, not when the
- * user first clicks Predict.
- */
-export function warmupWorker(modelBase) {
-  if (_onnxFailed) return
-  const modelUrl = `${modelBase}xgb_model.onnx`
-  try {
-    getWorker().postMessage({ type: 'warmup', modelUrl })
-  } catch {}
-}
-
-/**
  * Run in-browser prediction — mirrors the FastAPI /predict response shape.
  *
  * @param {string}      sequence        - DNA sequence
@@ -182,29 +119,28 @@ export async function predictOffline(
     candidates = (gcFiltered.length ? gcFiltered : candidates).slice(0, MAX_CANDIDATES)
   }
 
-  // 3. Score via worker (ONNX) or heuristic fallback
+  // 3. Extract 450-dim features and score via pure-JS XGBoost
   let rawScores
-  let modelLabel = 'XGBoost-ONNX'
+  let modelLabel = 'XGBoost-JS'
+  let usedHeuristic = false
 
-  if (!_onnxFailed) {
-    try {
-      const modelUrl  = `${modelBase}xgb_model.onnx`
-      const sequences = candidates.map(c => c.sequence)
-      // Extract 30-mer context: 4 bp upstream + 20 bp guide + 6 bp downstream
-      const thirtyMers = candidates.map(c => {
-        const start = c.position - 4
-        const end   = c.position + 20 + 6
-        if (start < 0 || end > seq.length) return ''
-        return seq.slice(start, end)
-      })
-      rawScores = await runInWorker(sequences, thirtyMers, modelUrl)
-    } catch (err) {
-      console.warn('[gRNA Predictor] ONNX worker failed, using heuristic:', err.message)
-      _onnxFailed = true
-    }
+  try {
+    const sequences  = candidates.map(c => c.sequence)
+    const thirtyMers = candidates.map(c => {
+      const start = c.position - 4
+      const end   = c.position + 20 + 6
+      if (start < 0 || end > seq.length) return ''
+      return seq.slice(start, end)
+    })
+    const features = extractFeaturesBatch(sequences, thirtyMers)
+    const raw      = await xgbPredict(features, modelBase)
+    rawScores      = Array.from(raw)
+  } catch (err) {
+    console.warn('[gRNA Predictor] XGBoost JS failed, using heuristic:', err.message)
+    usedHeuristic = true
   }
 
-  if (_onnxFailed || !rawScores) {
+  if (usedHeuristic || !rawScores) {
     rawScores  = heuristicScores(candidates)
     modelLabel = 'Heuristic'
   }
@@ -243,8 +179,8 @@ export async function predictOffline(
     pam_used:         pam,
     target_position:  targetPosition,
     proximity_weight: targetPosition !== null ? proximityWeight : null,
-    model_info:       _onnxFailed
-      ? 'Heuristic scorer (ONNX unavailable in this browser)'
+    model_info:       usedHeuristic
+      ? 'Heuristic scorer (model unavailable)'
       : MODEL_INFO_TEXT,
     top_grnas: ranked.map((g, i) => ({
       rank:               i + 1,

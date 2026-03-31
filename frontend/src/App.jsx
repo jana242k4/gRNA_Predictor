@@ -1,4 +1,4 @@
-import React, { useState, useEffect } from 'react'
+import React, { useState } from 'react'
 import {
   Box,
   Container,
@@ -17,18 +17,12 @@ import ResultsTable from './components/ResultsTable'
 import GeneMap from './components/GeneMap'
 import CitationCard from './components/CitationCard'
 import { predictGRNAs } from './services/api'
-import { warmupWorker } from './utils/onnxPredictor'
 
 export default function App() {
   const [loading, setLoading] = useState(false)
   const [error, setError] = useState(null)
   const [results, setResults] = useState(null)
   const [inputSeq, setInputSeq] = useState('')
-
-  // Pre-warm the ONNX worker on mount so WASM is compiled before first Predict click
-  useEffect(() => {
-    warmupWorker(import.meta.env.BASE_URL || '/')
-  }, [])
 
   const handlePredict = async (sequence, pam, targetPosition, proximityWeight) => {
     setLoading(true)
