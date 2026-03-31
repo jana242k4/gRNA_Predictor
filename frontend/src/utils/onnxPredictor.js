@@ -1,28 +1,73 @@
 /**
  * In-browser gRNA prediction — pure JavaScript, zero WebAssembly.
  *
- * Uses a pre-exported XGBoost tree structure (xgb_trees.json, 294 KB) for
- * accurate ML scoring with no WASM, no Workers, and no memory spikes.
- * Falls back to a GC heuristic if the JSON model fails to load.
+ * Feature extraction and XGBoost inference run inside a Web Worker so the
+ * main thread (UI) is never blocked, regardless of how long inference takes.
+ * Falls back to a GC heuristic if the Worker or model JSON fails to load.
  */
 import { findAllGRNAs } from './sequenceParser.js'
-import { extractFeaturesBatch } from './featureEngineering.js'
-import { xgbPredict } from './xgbPredictor.js'
 
 const SIGMA           = 50.0
 const CAS12A_PAMS     = new Set(['TTTV'])
 const MAX_CANDIDATES  = 200
 const MODEL_INFO_TEXT = 'XGBoost 450-dim (in-browser JS) — Doench 2016 + 2014, n=4,692'
+const WORKER_TIMEOUT  = 30_000   // ms — fall back to heuristic after 30 s
+
+// ---------------------------------------------------------------------------
+// Worker singleton
+// ---------------------------------------------------------------------------
+let _worker = null
+
+function getWorker () {
+  if (!_worker) {
+    // Vite bundles the worker as a separate chunk; the URL is resolved at
+    // build time so it works on both dev ('/') and GitHub Pages ('/gRNA_Predictor/').
+    _worker = new Worker(
+      new URL('../workers/xgbWorker.js', import.meta.url),
+      { type: 'module' }
+    )
+  }
+  return _worker
+}
+
+/**
+ * Run extraction + XGBoost inference in the background Worker.
+ * Returns a promise that resolves to Float32Array of raw scores.
+ */
+function workerPredict (sequences, thirtyMers, modelBase) {
+  return new Promise((resolve, reject) => {
+    let timer = null
+    const worker = getWorker()
+
+    const cleanup = () => { clearTimeout(timer) }
+
+    worker.onmessage = ({ data }) => {
+      cleanup()
+      if (data.ok) resolve(data.scores)
+      else         reject(new Error(data.error))
+    }
+    worker.onerror = (e) => {
+      cleanup()
+      reject(new Error(e.message || 'XGBoost worker error'))
+    }
+
+    timer = setTimeout(() => {
+      reject(new Error('XGBoost worker timed out'))
+    }, WORKER_TIMEOUT)
+
+    worker.postMessage({ sequences, thirtyMers, modelBase })
+  })
+}
 
 // ---------------------------------------------------------------------------
 // Off-target specificity heuristic
 // ---------------------------------------------------------------------------
-function _reverseComplement(seq) {
+function _reverseComplement (seq) {
   const comp = { A: 'T', T: 'A', C: 'G', G: 'C' }
   return seq.split('').reverse().map(b => comp[b] || b).join('')
 }
 
-function _hasHairpin(seq, minStem = 4) {
+function _hasHairpin (seq, minStem = 4) {
   for (let i = 0; i <= seq.length - minStem; i++) {
     const stem = seq.slice(i, i + minStem)
     const rc   = _reverseComplement(stem)
@@ -32,7 +77,7 @@ function _hasHairpin(seq, minStem = 4) {
   return false
 }
 
-function specificityScore(seq20) {
+function specificityScore (seq20) {
   const seq  = seq20.toUpperCase().slice(0, 20)
   const seed = seq.slice(-12)
 
@@ -65,17 +110,17 @@ function specificityScore(seq20) {
   ))
 }
 
-function cutSite(position, strand, pam) {
+function cutSite (position, strand, pam) {
   const isCas12a = CAS12A_PAMS.has(pam.toUpperCase())
   const offset   = isCas12a ? 18 : (strand === '+' ? 17 : 3)
   return position + offset + 1
 }
 
-function proximityScore(distance) {
+function proximityScore (distance) {
   return Math.exp(-(distance ** 2) / (2.0 * SIGMA ** 2))
 }
 
-function heuristicScores(candidates) {
+function heuristicScores (candidates) {
   return candidates.map(c => {
     const seq      = c.sequence
     const gc       = seq.split('').filter(b => b === 'G' || b === 'C').length / 20.0
@@ -97,7 +142,7 @@ function heuristicScores(candidates) {
  * @param {string}      modelBase       - Vite BASE_URL (for model file path)
  * @returns {object} PredictResponse-shaped object
  */
-export async function predictOffline(
+export async function predictOffline (
   sequence,
   pam = 'NGG',
   topN = 5,
@@ -119,9 +164,9 @@ export async function predictOffline(
     candidates = (gcFiltered.length ? gcFiltered : candidates).slice(0, MAX_CANDIDATES)
   }
 
-  // 3. Extract 450-dim features and score via pure-JS XGBoost
+  // 3. Extract features + score via Worker (runs off main thread — no UI freeze)
   let rawScores
-  let modelLabel = 'XGBoost-JS'
+  let modelLabel   = 'XGBoost-JS'
   let usedHeuristic = false
 
   try {
@@ -132,11 +177,10 @@ export async function predictOffline(
       if (start < 0 || end > seq.length) return ''
       return seq.slice(start, end)
     })
-    const features = extractFeaturesBatch(sequences, thirtyMers)
-    const raw      = await xgbPredict(features, modelBase)
-    rawScores      = Array.from(raw)
+    const scores = await workerPredict(sequences, thirtyMers, modelBase)
+    rawScores    = Array.from(scores)
   } catch (err) {
-    console.warn('[gRNA Predictor] XGBoost JS failed, using heuristic:', err.message)
+    console.warn('[gRNA Predictor] Worker inference failed, using heuristic:', err.message)
     usedHeuristic = true
   }
 
