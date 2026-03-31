@@ -38,6 +38,14 @@ Seed-region G-runs
   G-rich stretches in the seed form G-quadruplexes and have been associated
   with increased off-target binding in cell-free assays.
   Reference: Tycko et al. 2016 Mol Cell
+
+Sequence complexity / entropy
+  Low-complexity guides (repetitive dinucleotides, low k-mer entropy) are
+  significantly more likely to match multiple genomic loci with 1–2 mismatches
+  because repeat motifs occur at elevated frequency across the genome.
+  Dinucleotide-repeat guides (e.g. ATATAT...) show 3–5× more off-target hits
+  in ChIP-seq–based off-target assays (Kuscu et al. 2014 Nat Biotechnol 32:677;
+  Tsai et al. 2015 Nat Biotechnol 33:187).
 """
 import math
 import numpy as np
@@ -76,6 +84,46 @@ def _pam_proximal_gc_run(seq: str) -> int:
         else:
             break
     return run
+
+
+def _sequence_entropy(seq: str, k: int = 3) -> float:
+    """
+    Normalised Shannon entropy of k-mer distribution over the guide.
+    Range [0, 1]: 0 = maximally repetitive, 1 = maximally diverse.
+    Low entropy indicates a repetitive sequence that is likely to match
+    multiple genomic loci with 1–2 mismatches.
+    """
+    n = len(seq)
+    if n < k:
+        return 1.0
+    kmers = [seq[i:i + k] for i in range(n - k + 1)]
+    total = len(kmers)
+    counts: dict = {}
+    for km in kmers:
+        counts[km] = counts.get(km, 0) + 1
+    entropy = -sum((c / total) * math.log2(c / total) for c in counts.values())
+    max_entropy = math.log2(total) if total > 1 else 1.0
+    return entropy / max_entropy
+
+
+def _complexity_penalty(seq: str) -> float:
+    """
+    Penalty for low-complexity / repetitive sequences.
+    Two components:
+      - Dinucleotide repeat ≥ 6 bp (e.g. ATATAT, GCGCGC): +0.10
+      - Normalised 3-mer entropy below 0.70 threshold: up to +0.12
+    """
+    dimer_pen = 0.0
+    for i in range(len(seq) - 1):
+        dimer = seq[i:i + 2]
+        if dimer * 3 in seq:  # dimer repeated 3+ times consecutively
+            dimer_pen = 0.10
+            break
+
+    entropy    = _sequence_entropy(seq, k=3)
+    entropy_pen = max(0.0, (0.70 - entropy) * 0.20) if entropy < 0.70 else 0.0
+
+    return dimer_pen + entropy_pen
 
 
 def specificity_score(sequence: str) -> float:
@@ -121,5 +169,8 @@ def specificity_score(sequence: str) -> float:
     seed       = seq[-12:]
     gq_pen     = 0.08 if "GGG" in seed else 0.0
 
-    raw = 1.0 - seed_pen - gc_pen - gc_run_pen - hp_pen - hairpin_pen - gq_pen
+    # ── 7. Sequence complexity (low-entropy / repetitive guides) ─────────────
+    complexity_pen = _complexity_penalty(seq)
+
+    raw = 1.0 - seed_pen - gc_pen - gc_run_pen - hp_pen - hairpin_pen - gq_pen - complexity_pen
     return float(np.clip(raw, 0.0, 1.0))

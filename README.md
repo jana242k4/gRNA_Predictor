@@ -5,7 +5,15 @@
 
 **Live demo → [jana242k4.github.io/gRNA_Predictor](https://jana242k4.github.io/gRNA_Predictor)**
 
-AI-powered CRISPR guide RNA (sgRNA) designer with XGBoost-based efficiency prediction, **off-target specificity scoring**, and **Gaussian proximity-weighted ranking** — backed by a FastAPI server (Render) for full ML inference, with a pure-JavaScript fallback for offline use.
+ML-assisted CRISPR guide RNA (sgRNA) design and ranking tool with XGBoost-based efficiency prediction, **off-target specificity scoring**, and **Gaussian proximity-weighted ranking** — backed by a FastAPI server (Render) for full ML inference, with a pure-JavaScript fallback for offline use.
+
+---
+
+## ⚠️ Current Limitations
+
+- Off-target scoring is sequence-intrinsic heuristic and does not perform genome-wide alignment
+- Efficiency predictions are based on trained ML model, but not validated across all organism contexts
+- Tool is intended for research and educational use, not clinical or experimental decision-making
 
 ---
 

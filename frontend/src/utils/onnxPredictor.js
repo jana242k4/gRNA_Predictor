@@ -58,7 +58,28 @@ function specificityScore(seq20) {
   })()
   const gqPen = seed.includes('GGG') ? 0.08 : 0.0
 
-  return Math.min(1.0, Math.max(0.0, 1.0 - seedPen - gcPen - gcRunPen - hpPen - hairpinPen - gqPen))
+  // Sequence complexity: low-entropy / repetitive guides hit more loci
+  // (mirrors backend off_target.py _complexity_penalty)
+  const _kmerEntropy = (s, k) => {
+    const kmers = {}
+    for (let i = 0; i <= s.length - k; i++) {
+      const km = s.slice(i, i + k)
+      kmers[km] = (kmers[km] || 0) + 1
+    }
+    const total = s.length - k + 1
+    const H = -Object.values(kmers).reduce((acc, c) => acc + (c/total) * Math.log2(c/total), 0)
+    return total > 1 ? H / Math.log2(total) : 1.0
+  }
+  let dimerPen = 0.0
+  for (let i = 0; i < seq.length - 1; i++) {
+    const d = seq.slice(i, i + 2)
+    if (seq.includes(d + d + d)) { dimerPen = 0.10; break }
+  }
+  const entropy     = _kmerEntropy(seq, 3)
+  const entropyPen  = entropy < 0.70 ? Math.max(0.0, (0.70 - entropy) * 0.20) : 0.0
+  const complexityPen = dimerPen + entropyPen
+
+  return Math.min(1.0, Math.max(0.0, 1.0 - seedPen - gcPen - gcRunPen - hpPen - hairpinPen - gqPen - complexityPen))
 }
 
 function heuristicScore(seq) {
