@@ -1,221 +1,145 @@
 /**
- * In-browser gRNA prediction — pure JavaScript, zero WebAssembly.
+ * In-browser gRNA prediction (fallback when backend is unreachable).
  *
- * Feature extraction and XGBoost inference run inside a Web Worker so the
- * main thread (UI) is never blocked, regardless of how long inference takes.
- * Falls back to a GC heuristic if the Worker or model JSON fails to load.
+ * Uses pure-JavaScript XGBoost tree traversal — no WebAssembly, no Workers.
+ * Fetches xgb_trees.json (~296 KB) once and caches it.  Inference is
+ * time-sliced (25 candidates per chunk, yields every ~3 ms) so the main
+ * thread stays responsive.
+ *
+ * This path is only reached if the FastAPI backend (Render or localhost)
+ * returns a network error.  Timeouts are surfaced directly so the user
+ * knows to wait for the Render cold-start.
  */
-import { findAllGRNAs } from './sequenceParser.js'
+import { findAllGRNAs }         from './sequenceParser.js'
+import { extractFeaturesBatch }  from './featureEngineering.js'
+import { xgbPredict }            from './xgbPredictor.js'
 
-const SIGMA           = 50.0
-const CAS12A_PAMS     = new Set(['TTTV'])
-const MAX_CANDIDATES  = 200
-const MODEL_INFO_TEXT = 'XGBoost 450-dim (in-browser JS) — Doench 2016 + 2014, n=4,692'
-const WORKER_TIMEOUT  = 30_000   // ms — fall back to heuristic after 30 s
-
-// ---------------------------------------------------------------------------
-// Worker singleton
-// ---------------------------------------------------------------------------
-let _worker = null
-
-function getWorker () {
-  if (!_worker) {
-    // Vite bundles the worker as a separate chunk; the URL is resolved at
-    // build time so it works on both dev ('/') and GitHub Pages ('/gRNA_Predictor/').
-    _worker = new Worker(
-      new URL('../workers/xgbWorker.js', import.meta.url),
-      { type: 'module' }
-    )
-  }
-  return _worker
-}
-
-/**
- * Run extraction + XGBoost inference in the background Worker.
- * Returns a promise that resolves to Float32Array of raw scores.
- */
-function workerPredict (sequences, thirtyMers, modelBase) {
-  return new Promise((resolve, reject) => {
-    let timer = null
-    const worker = getWorker()
-
-    const cleanup = () => { clearTimeout(timer) }
-
-    worker.onmessage = ({ data }) => {
-      cleanup()
-      if (data.ok) resolve(data.scores)
-      else         reject(new Error(data.error))
-    }
-    worker.onerror = (e) => {
-      cleanup()
-      reject(new Error(e.message || 'XGBoost worker error'))
-    }
-
-    timer = setTimeout(() => {
-      reject(new Error('XGBoost worker timed out'))
-    }, WORKER_TIMEOUT)
-
-    worker.postMessage({ sequences, thirtyMers, modelBase })
-  })
-}
+const SIGMA          = 50.0
+const CAS12A_PAMS    = new Set(['TTTV'])
+const MAX_CANDIDATES = 200
+const MODEL_INFO     = 'XGBoost 450-dim (in-browser JS) — Doench 2016 + 2014, n=4,692'
 
 // ---------------------------------------------------------------------------
-// Off-target specificity heuristic
+// Off-target specificity heuristic (used in all modes)
 // ---------------------------------------------------------------------------
-function _reverseComplement (seq) {
+function _rc(seq) {
   const comp = { A: 'T', T: 'A', C: 'G', G: 'C' }
   return seq.split('').reverse().map(b => comp[b] || b).join('')
 }
 
-function _hasHairpin (seq, minStem = 4) {
-  for (let i = 0; i <= seq.length - minStem; i++) {
-    const stem = seq.slice(i, i + minStem)
-    const rc   = _reverseComplement(stem)
-    const j    = seq.indexOf(rc)
-    if (j !== -1 && j !== i) return true
-  }
-  return false
-}
-
-function specificityScore (seq20) {
+function specificityScore(seq20) {
   const seq  = seq20.toUpperCase().slice(0, 20)
   const seed = seq.slice(-12)
 
-  const seedAt  = seed.split('').filter(b => b === 'A' || b === 'T').length / 12.0
-  const seedPen = seedAt * 0.28
+  const seedPen = (seed.split('').filter(b => b === 'A' || b === 'T').length / 12.0) * 0.28
 
   const gc = seq.split('').filter(b => b === 'G' || b === 'C').length / 20.0
   let gcPen = 0.0
-  if (gc < 0.25 || gc > 0.75)       gcPen = 0.20
-  else if (gc < 0.35 || gc > 0.65)  gcPen = 0.10
-  else if (gc < 0.40 || gc > 0.60)  gcPen = 0.05
+  if      (gc < 0.25 || gc > 0.75) gcPen = 0.20
+  else if (gc < 0.35 || gc > 0.65) gcPen = 0.10
+  else if (gc < 0.40 || gc > 0.60) gcPen = 0.05
 
   let gcRun = 0
   for (const b of seq.slice(-6).split('').reverse()) {
-    if (b === 'G' || b === 'C') gcRun++
-    else break
+    if (b === 'G' || b === 'C') gcRun++; else break
   }
   const gcRunPen = Math.min(0.20, Math.max(0.0, gcRun - 2) * 0.08)
 
   let hpPen = 0.0
-  for (const b of ['A', 'C', 'G', 'T']) {
-    if (seq.includes(b.repeat(4))) hpPen += 0.08
-  }
+  for (const b of ['A', 'C', 'G', 'T']) if (seq.includes(b.repeat(4))) hpPen += 0.08
 
-  const hairpinPen = _hasHairpin(seq, 4) ? 0.12 : 0.0
-  const gqPen      = seed.includes('GGG') ? 0.08 : 0.0
+  const hairpinPen = (() => {
+    for (let i = 0; i <= seq.length - 4; i++) {
+      const rc = _rc(seq.slice(i, i + 4))
+      const j  = seq.indexOf(rc)
+      if (j !== -1 && j !== i) return 0.12
+    }
+    return 0.0
+  })()
+  const gqPen = seed.includes('GGG') ? 0.08 : 0.0
 
-  return Math.min(1.0, Math.max(0.0,
-    1.0 - seedPen - gcPen - gcRunPen - hpPen - hairpinPen - gqPen
-  ))
+  return Math.min(1.0, Math.max(0.0, 1.0 - seedPen - gcPen - gcRunPen - hpPen - hairpinPen - gqPen))
 }
 
-function cutSite (position, strand, pam) {
+function heuristicScore(seq) {
+  const gc       = seq.split('').filter(b => b === 'G' || b === 'C').length / 20.0
+  const seedGc   = seq.slice(-12).split('').filter(b => b === 'G' || b === 'C').length / 12.0
+  const polyT    = seq.includes('TTTT') ? 0.3 : 0.0
+  return Math.max(0.05,
+    0.6 * Math.max(0.1, 1.0 - Math.abs(gc - 0.55) * 2.0) +
+    0.4 * Math.max(0.1, 1.0 - Math.abs(seedGc - 0.50) * 2.0) - polyT
+  )
+}
+
+function cutSite(position, strand, pam) {
   const isCas12a = CAS12A_PAMS.has(pam.toUpperCase())
-  const offset   = isCas12a ? 18 : (strand === '+' ? 17 : 3)
-  return position + offset + 1
+  return position + (isCas12a ? 18 : strand === '+' ? 17 : 3) + 1
 }
 
-function proximityScore (distance) {
-  return Math.exp(-(distance ** 2) / (2.0 * SIGMA ** 2))
+function proximityScore(d) {
+  return Math.exp(-(d ** 2) / (2.0 * SIGMA ** 2))
 }
 
-function heuristicScores (candidates) {
-  return candidates.map(c => {
-    const seq      = c.sequence
-    const gc       = seq.split('').filter(b => b === 'G' || b === 'C').length / 20.0
-    const gcScore  = Math.max(0.1, 1.0 - Math.abs(gc - 0.55) * 2.0)
-    const seedGc   = seq.slice(-12).split('').filter(b => b === 'G' || b === 'C').length / 12.0
-    const seedScore = Math.max(0.1, 1.0 - Math.abs(seedGc - 0.50) * 2.0)
-    return 0.6 * gcScore + 0.4 * seedScore
-  })
-}
-
-/**
- * Run in-browser prediction — mirrors the FastAPI /predict response shape.
- *
- * @param {string}      sequence        - DNA sequence
- * @param {string}      pam             - PAM (NGG / NAG / NNGRRT / TTTV)
- * @param {number}      topN            - Number of top results to return
- * @param {number|null} targetPosition  - 1-indexed target for proximity ranking
- * @param {number}      proximityWeight - w ∈ [0,1]
- * @param {string}      modelBase       - Vite BASE_URL (for model file path)
- * @returns {object} PredictResponse-shaped object
- */
-export async function predictOffline (
-  sequence,
-  pam = 'NGG',
-  topN = 5,
-  targetPosition = null,
-  proximityWeight = 0.4,
-  modelBase = '/'
+// ---------------------------------------------------------------------------
+// Main export — mirrors FastAPI /predict response shape
+// ---------------------------------------------------------------------------
+export async function predictOffline(
+  sequence, pam = 'NGG', topN = 5,
+  targetPosition = null, proximityWeight = 0.4, modelBase = '/'
 ) {
   const seq = sequence.toUpperCase().replace(/\s+/g, '')
 
-  // 1. Find candidate guides
   let candidates = findAllGRNAs(seq, pam)
-  if (!candidates.length) {
+  if (!candidates.length)
     throw new Error(`No valid PAM (${pam}) sites found in the provided sequence.`)
-  }
 
-  // 2. Pre-filter by GC
   if (candidates.length > MAX_CANDIDATES) {
-    const gcFiltered = candidates.filter(c => c.gc_content >= 0.35 && c.gc_content <= 0.75)
-    candidates = (gcFiltered.length ? gcFiltered : candidates).slice(0, MAX_CANDIDATES)
+    const gc = candidates.filter(c => c.gc_content >= 0.35 && c.gc_content <= 0.75)
+    candidates = (gc.length ? gc : candidates).slice(0, MAX_CANDIDATES)
   }
 
-  // 3. Extract features + score via Worker (runs off main thread — no UI freeze)
-  let rawScores
-  let modelLabel   = 'XGBoost-JS'
-  let usedHeuristic = false
-
+  // XGBoost inference (time-sliced, non-blocking)
+  let rawScores, modelLabel, modelInfo
   try {
-    const sequences  = candidates.map(c => c.sequence)
-    const thirtyMers = candidates.map(c => {
-      const start = c.position - 4
-      const end   = c.position + 20 + 6
-      if (start < 0 || end > seq.length) return ''
-      return seq.slice(start, end)
+    const seqs    = candidates.map(c => c.sequence)
+    const tm30s   = candidates.map(c => {
+      const s = c.position - 4, e = c.position + 26
+      return (s >= 0 && e <= seq.length) ? seq.slice(s, e) : ''
     })
-    const scores = await workerPredict(sequences, thirtyMers, modelBase)
-    rawScores    = Array.from(scores)
+    const feats   = extractFeaturesBatch(seqs, tm30s)
+    const raw     = await xgbPredict(feats, modelBase)
+    rawScores  = Array.from(raw)
+    modelLabel = 'XGBoost-JS'
+    modelInfo  = MODEL_INFO
   } catch (err) {
-    console.warn('[gRNA Predictor] Worker inference failed, using heuristic:', err.message)
-    usedHeuristic = true
-  }
-
-  if (usedHeuristic || !rawScores) {
-    rawScores  = heuristicScores(candidates)
+    console.warn('[gRNA Predictor] XGBoost fallback failed, using heuristic:', err.message)
+    rawScores  = candidates.map(c => heuristicScore(c.sequence))
     modelLabel = 'Heuristic'
+    modelInfo  = 'Heuristic scorer (XGBoost model unavailable)'
   }
 
-  // 4. Compute cut sites, specificity, combined scores
   for (let i = 0; i < candidates.length; i++) {
-    const c     = candidates[i]
-    const score = Math.min(1.0, Math.max(0.0, rawScores[i]))
-    c.score           = Math.round(score * 10000) / 10000
-    c.model_used      = modelLabel
-    c.cut_site        = cutSite(c.position, c.strand, pam)
-    const spec        = specificityScore(c.sequence)
+    const c    = candidates[i]
+    const sc   = Math.min(1.0, Math.max(0.0, rawScores[i]))
+    c.score            = Math.round(sc * 10000) / 10000
+    c.model_used       = modelLabel
+    c.cut_site         = cutSite(c.position, c.strand, pam)
+    const spec         = specificityScore(c.sequence)
     c.off_target_score = Math.round(spec * 1000) / 1000
-    const effAdj      = c.score * spec
+    const effAdj       = sc * spec
 
     if (targetPosition !== null) {
-      const dist           = Math.abs(c.cut_site - targetPosition)
-      c.distance_to_target = dist
-      c.combined_score     = Math.round(
-        ((1.0 - proximityWeight) * effAdj + proximityWeight * proximityScore(dist))
-        * 10000) / 10000
+      const d            = Math.abs(c.cut_site - targetPosition)
+      c.distance_to_target = d
+      c.combined_score   = Math.round(
+        ((1 - proximityWeight) * effAdj + proximityWeight * proximityScore(d)) * 10000) / 10000
     } else {
       c.distance_to_target = null
       c.combined_score     = Math.round(effAdj * 10000) / 10000
     }
   }
 
-  // 5. Rank and return top N
-  const ranked = [...candidates]
-    .sort((a, b) => b.combined_score - a.combined_score)
-    .slice(0, topN)
+  const ranked = [...candidates].sort((a, b) => b.combined_score - a.combined_score).slice(0, topN)
 
   return {
     total_candidates: candidates.length,
@@ -223,22 +147,14 @@ export async function predictOffline (
     pam_used:         pam,
     target_position:  targetPosition,
     proximity_weight: targetPosition !== null ? proximityWeight : null,
-    model_info:       usedHeuristic
-      ? 'Heuristic scorer (model unavailable)'
-      : MODEL_INFO_TEXT,
+    model_info:       modelInfo,
     top_grnas: ranked.map((g, i) => ({
-      rank:               i + 1,
-      sequence:           g.sequence,
-      pam_sequence:       g.pam_sequence,
-      position:           g.position,
-      strand:             g.strand,
-      score:              g.score,
-      gc_content:         Math.round(g.gc_content * 1000) / 1000,
-      model_used:         g.model_used,
-      cut_site:           g.cut_site,
+      rank: i + 1, sequence: g.sequence, pam_sequence: g.pam_sequence,
+      position: g.position, strand: g.strand, score: g.score,
+      gc_content: Math.round(g.gc_content * 1000) / 1000,
+      model_used: g.model_used, cut_site: g.cut_site,
       distance_to_target: g.distance_to_target,
-      combined_score:     g.combined_score,
-      off_target_score:   g.off_target_score,
+      combined_score: g.combined_score, off_target_score: g.off_target_score,
     })),
   }
 }

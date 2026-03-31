@@ -1,30 +1,24 @@
 import axios from 'axios'
 import { predictOffline } from '../utils/onnxPredictor.js'
 
+// In production (GitHub Pages) this is the Render API URL (set in .env.production).
+// In local dev it falls back to localhost:8000.
 const BASE_URL = import.meta.env.VITE_API_BASE_URL || 'http://localhost:8000/api/v1'
-
-// On GitHub Pages (HTTPS) the local backend is never available.
-// Skip the network call entirely to avoid a 60-second mixed-content hang.
-const IS_STATIC_HOST = typeof window !== 'undefined' &&
-  (window.location.hostname.endsWith('.github.io') ||
-   window.location.protocol === 'file:')
 
 const apiClient = axios.create({
   baseURL: BASE_URL,
-  timeout: 4000,   // 4 s — fall back to ONNX quickly if backend unreachable
+  // 60 s — Render free tier has a ~30 s cold-start after 15 min idle.
+  // Users see the spinner, then results appear once the backend wakes up.
+  timeout: 60000,
   headers: { 'Content-Type': 'application/json' },
 })
 
 /**
  * Predict top gRNAs for a given DNA sequence.
- * Tries the local FastAPI backend first; falls back to in-browser ONNX
- * inference when the backend is unreachable (e.g. GitHub Pages hosting).
  *
- * @param {string} sequence           - Raw DNA sequence (ACGTN)
- * @param {string} pam                - PAM sequence (default: NGG)
- * @param {number} topN               - Number of top results to return
- * @param {number|null} targetPosition - Optional 1-indexed target position for proximity ranking
- * @param {number} proximityWeight    - Weight for proximity vs efficiency (0.0-1.0, default 0.4)
+ * Tries the configured backend (Render in prod, localhost in dev).
+ * Falls back to in-browser XGBoost JS inference only if the backend
+ * is completely unreachable (network error, not a slow cold start).
  */
 export async function predictGRNAs(
   sequence,
@@ -43,26 +37,21 @@ export async function predictGRNAs(
     body.target_position = parseInt(targetPosition, 10)
   }
 
-  // Skip network call entirely on static hosts (GitHub Pages etc.)
-  if (IS_STATIC_HOST) {
-    const tgt = body.target_position ?? null
-    return predictOffline(
-      body.sequence, pam, topN, tgt, proximityWeight,
-      import.meta.env.BASE_URL || '/'
-    )
-  }
-
   try {
     const response = await apiClient.post('/predict', body)
     return response.data
-  } catch (_err) {
-    // Backend unreachable — use in-browser ONNX (offline / local with no server)
-    console.info('[gRNA Predictor] Backend unavailable — using in-browser ONNX inference')
-    const tgt = body.target_position ?? null
-    return predictOffline(
-      body.sequence, pam, topN, tgt, proximityWeight,
-      import.meta.env.BASE_URL || '/'
-    )
+  } catch (err) {
+    // Only fall back to in-browser inference on network errors (backend not reachable).
+    // Timeouts and HTTP errors are surfaced directly so the user knows what happened.
+    if (err.code === 'ERR_NETWORK' || err.code === 'ECONNREFUSED') {
+      console.info('[gRNA Predictor] Backend unreachable — using in-browser XGBoost JS inference')
+      const tgt = body.target_position ?? null
+      return predictOffline(
+        body.sequence, pam, topN, tgt, proximityWeight,
+        import.meta.env.BASE_URL || '/'
+      )
+    }
+    throw err
   }
 }
 

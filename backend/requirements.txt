@@ -10,5 +10,3 @@ scipy
 httpx
 pytest
 pytest-asyncio
-onnxmltools
-onnxruntime
