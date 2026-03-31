@@ -5,19 +5,20 @@
 
 **Live demo → [jana242k4.github.io/gRNA_Predictor](https://jana242k4.github.io/gRNA_Predictor)**
 
-AI-powered CRISPR guide RNA (sgRNA) designer with XGBoost-based efficiency prediction, **off-target specificity scoring**, and **Gaussian proximity-weighted ranking** — runs entirely in the browser via ONNX Web Worker, no server required.
+AI-powered CRISPR guide RNA (sgRNA) designer with XGBoost-based efficiency prediction, **off-target specificity scoring**, and **Gaussian proximity-weighted ranking** — runs entirely in the browser via pure JavaScript tree traversal, no server or WebAssembly required.
 
 ---
 
 ## Features
 
 - **XGBoost ML scoring** — 450-dimensional feature model trained on 4,692 experimental guides (Doench 2016 + 2014)
+- **Pure-JS in-browser inference** — model exported as a compact 294 KB JSON tree structure; traversed directly in JavaScript (~3 ms per prediction, zero WASM/memory overhead)
 - **Multi-objective ranking** — `combined_score = efficiency × specificity × proximity_weight`; off-target risk penalises efficiency multiplicatively
 - **Novel proximity ranking** — guides re-ranked by Gaussian decay from a user-specified genomic target; adjustable weight *w* optimises the efficiency–proximity tradeoff
 - **Off-target specificity** — sequence-intrinsic heuristic (seed AT content, GC runs, hairpin, G-quadruplex) following Hsu 2013 / Doench 2016
 - **Multi-PAM support** — SpCas9 (NGG/NAG), SaCas9 (NNGRRT), Cas12a (TTTV)
 - **Both strands** — detects guides on forward and reverse complement
-- **Runs offline** — ONNX inference in a Web Worker (non-blocking); heuristic fallback if WASM unavailable
+- **Works offline** — no network calls on GitHub Pages; heuristic fallback if model JSON fails to load
 
 ---
 
@@ -51,7 +52,7 @@ AI-powered CRISPR guide RNA (sgRNA) designer with XGBoost-based efficiency predi
 **Multi-objective scoring** integrates three components no existing tool combines automatically:
 
 ```
-eff_adj       = ML_efficiency × specificity_score
+eff_adj        = ML_efficiency × specificity_score
 combined_score = (1 − w) × eff_adj + w × exp(−d² / 2σ²)
 ```
 
@@ -68,7 +69,9 @@ This tool **quantifies and optimises the efficiency–specificity–proximity tr
 ## Quick Start
 
 ### Option A — Live demo (no installation)
-Open the [GitHub Pages URL](https://jana242k4.github.io/gRNA_Predictor). The model runs in-browser via WebAssembly ONNX.
+
+Open **[jana242k4.github.io/gRNA_Predictor](https://jana242k4.github.io/gRNA_Predictor)**.
+The XGBoost model runs entirely in your browser via pure JavaScript — no WebAssembly, no server, no installation needed.
 
 ### Option B — Full local stack (backend + frontend)
 
@@ -77,12 +80,12 @@ Open the [GitHub Pages URL](https://jana242k4.github.io/gRNA_Predictor). The mod
 git clone https://github.com/jana242k4/gRNA_Predictor.git
 cd gRNA_Predictor
 
-# Backend
+# Backend (Python 3.13 + FastAPI)
 pip install -r backend/requirements.txt
 cd backend && uvicorn app.main:app --reload
 # → http://localhost:8000/docs
 
-# Frontend (new terminal)
+# Frontend (React 18 + Vite, separate terminal)
 cd frontend && npm install && npm run dev
 # → http://localhost:5173
 ```
@@ -97,6 +100,7 @@ Trees:          500   Learning rate: 0.03   Max depth: 5
 Features:       450-dimensional vector
 Training data:  4,692 guides — Doench 2016 (4,379) + Doench 2014 (313)
 Held-out:       2,565 Kim 2019 guides (independent validation set)
+Browser model:  294 KB JSON tree dump (500 trees, 18,330 nodes)
 ```
 
 ### Feature vector (450 dims)
@@ -125,37 +129,38 @@ Held-out:       2,565 Kim 2019 guides (independent validation set)
 gRNA_Predictor/
 ├── backend/
 │   ├── app/
-│   │   ├── api/endpoints.py         # POST /api/v1/predict
+│   │   ├── api/endpoints.py            # POST /api/v1/predict
 │   │   ├── models/
-│   │   │   ├── xgb_model.pkl        # Trained XGBoost model
-│   │   │   └── schemas.py           # Pydantic request/response
-│   │   ├── services/
-│   │   │   ├── feature_engineering.py  # 450-dim features
-│   │   │   ├── sequence_parser.py      # PAM detection
-│   │   │   └── scorer.py               # Heuristic fallback
-│   │   └── utils/biology_utils.py   # Tm, GC, hairpin
+│   │   │   ├── xgb_model.pkl           # Trained XGBoost model
+│   │   │   └── schemas.py              # Pydantic request/response
+│   │   └── services/
+│   │       ├── feature_engineering.py  # 450-dim features
+│   │       ├── sequence_parser.py      # PAM detection (NGG/NAG/NNGRRT/TTTV)
+│   │       └── off_target.py           # Specificity heuristic
 │   ├── data/
 │   │   ├── combined_training_data.csv  # 11,991 guides
 │   │   └── kim2019_holdout.csv         # 2,565 independent guides
-│   ├── benchmark_results/           # Figures + metrics
-│   ├── train_model.py               # Retrain from scratch
-│   ├── compare_azimuth.py           # Head-to-head vs Azimuth
-│   ├── independent_validation.py    # Cross-dataset validation
-│   ├── shap_analysis.py             # Feature importance
-│   └── export_onnx.py               # PKL → ONNX for browser
+│   ├── benchmark_results/              # Figures + metrics
+│   ├── train_model.py                  # Retrain from scratch
+│   ├── export_js_model.py              # PKL → xgb_trees.json (294 KB)
+│   ├── compare_azimuth.py              # Head-to-head vs Azimuth
+│   ├── independent_validation.py       # Cross-dataset validation
+│   ├── shap_analysis.py                # Feature importance
+│   └── create_documentation_pdf.py     # Biology reference PDF
 ├── frontend/
-│   ├── public/xgb_model.onnx        # Model for in-browser inference
+│   ├── public/
+│   │   ├── xgb_trees.json              # 294 KB model (pure JS inference)
+│   │   └── xgb_model.onnx              # Legacy ONNX (unused in browser)
 │   └── src/
 │       ├── utils/
-│       │   ├── featureEngineering.js  # 450-dim JS port
-│       │   ├── sequenceParser.js      # PAM detection JS port
-│       │   └── onnxPredictor.js       # ONNX orchestrator + specificity scorer
-│       ├── workers/
-│       │   └── onnxWorker.js          # Web Worker: ONNX inference off main thread
-│       └── services/api.js            # API with static-host detection + ONNX fallback
+│       │   ├── featureEngineering.js   # 450-dim JS port
+│       │   ├── sequenceParser.js       # PAM detection JS port
+│       │   ├── xgbPredictor.js         # Pure-JS XGBoost tree traversal
+│       │   └── onnxPredictor.js        # Orchestrator + specificity scorer
+│       └── services/api.js             # API with static-host detection
 └── .github/workflows/
-    ├── deploy.yml                   # GitHub Pages auto-deploy
-    └── test.yml                     # Backend pytest CI
+    ├── deploy.yml                      # GitHub Pages auto-deploy
+    └── test.yml                        # Backend pytest CI
 ```
 
 ---
@@ -180,13 +185,13 @@ python compare_azimuth.py                   # vs Azimuth benchmark
 python independent_validation.py            # Kim 2019, Chari 2015, Xu 2015
 python shap_analysis.py                     # SHAP feature importance
 python publication_figures.py               # Regenerate all figures
-python create_benchmark_pdf.py              # LinkedIn-ready PDF
+python create_documentation_pdf.py          # Biology reference PDF
 ```
 
-## Re-exporting the ONNX model
+## Re-exporting the browser model
 
 ```bash
 cd backend && source ../.venv/Scripts/activate
-python export_onnx.py
-# → frontend/public/xgb_model.onnx (580 KB, verified 0.000000 max diff)
+python export_js_model.py
+# → frontend/public/xgb_trees.json (294 KB, 500 trees, 18,330 nodes)
 ```
