@@ -31,6 +31,10 @@ async function loadModel(modelBase) {
  */
 export async function xgbPredict(featuresFlat, modelBase = '/') {
   const model = await loadModel(modelBase)
+  // Yield the event loop once after the (async) model load so the UI
+  // stays responsive before we enter the synchronous traversal loops.
+  await new Promise(resolve => setTimeout(resolve, 0))
+
   const { numTrees, treeOffsets, features, thresholds, left, right } = model
   const DIM = 450
   const N   = Math.round(featuresFlat.length / DIM)
