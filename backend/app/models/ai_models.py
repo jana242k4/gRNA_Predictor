@@ -51,18 +51,32 @@ def _load_model():
     return _model
 
 
-def predict_efficiency(candidates: List[dict]) -> List[dict]:
+def predict_efficiency(candidates: List[dict], full_sequence: str = "") -> List[dict]:
     """
     Predict efficiency scores for a list of gRNA candidates.
     Uses XGBoost model if available, otherwise falls back to heuristic.
+
+    full_sequence: the original input sequence, used to build 30-mer context
+    (4 bp upstream + 20 bp guide + 6 bp downstream) for context-dependent features.
     """
     from app.services.scorer import score_grna  # lazy import to avoid circular
 
     model = _load_model()
 
     if model is not None:
-        sequences = [c["sequence"] for c in candidates]
-        X = np.vstack([extract_features(s) for s in sequences])
+        seq_upper = full_sequence.upper()
+
+        def _thirty_mer(c: dict) -> str:
+            pos = c.get("position", 0)
+            s, e = pos - 4, pos + 26
+            if seq_upper and s >= 0 and e <= len(seq_upper):
+                return seq_upper[s:e]
+            return ""
+
+        X = np.vstack([
+            extract_features(c["sequence"], _thirty_mer(c))
+            for c in candidates
+        ])
         scores = model.predict(X)
         for c, score in zip(candidates, scores):
             c["score"] = round(float(np.clip(score, 0.0, 1.0)), 4)

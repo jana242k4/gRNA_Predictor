@@ -10,7 +10,7 @@ Cas12a (TTTV — 5' PAM):
 
 Proximity score uses Gaussian decay with sigma = 50 bp:
   proximity = exp(−distance² / (2 × 50²))
-  → 0 bp = 1.0,  50 bp = 0.37,  100 bp = 0.02
+  → 0 bp = 1.0,  50 bp = 0.61,  100 bp = 0.14
 
 Biological justification for σ = 50 bp:
   - SpCas9 can edit efficiently within ±50 bp of its cut site for most HDR
@@ -19,7 +19,7 @@ Biological justification for σ = 50 bp:
   - Guides >200 bp from a desired edit site carry non-trivial HDR failure risk
     due to reduced template proximity.
   - σ = 50 gives: guides within 25 bp → >78% proximity weight;
-    guides at 100 bp → 2% proximity weight (effectively deprioritised).
+    guides at 100 bp → 14% proximity weight (effectively deprioritised).
   - Sensitivity analysis (compare_azimuth.py) confirms ranking order is robust
     to σ ∈ {25, 50, 100} bp for typical use cases.
 
@@ -68,7 +68,7 @@ def _cut_site(candidate: dict, pam: str) -> int:
 
 
 def _proximity_score(distance: int, sigma: float = _PROXIMITY_SIGMA) -> float:
-    """Gaussian proximity score: 1.0 at 0 bp, ~0.37 at sigma bp."""
+    """Gaussian proximity score: 1.0 at 0 bp, ~0.61 at sigma bp."""
     return math.exp(-(distance ** 2) / (2.0 * sigma ** 2))
 
 
@@ -96,7 +96,7 @@ def predict_grnas(request: PredictRequest):
         candidates = gc_filtered[:MAX_CANDIDATES] if gc_filtered else candidates[:MAX_CANDIDATES]
 
     # --- Efficiency scoring (ML or heuristic) ---
-    scored = predict_efficiency(candidates)
+    scored = predict_efficiency(candidates, full_sequence=request.sequence)
 
     # --- Cut site, proximity, and off-target specificity ---
     target = request.target_position   # 1-indexed or None

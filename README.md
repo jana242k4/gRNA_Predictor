@@ -5,20 +5,21 @@
 
 **Live demo → [jana242k4.github.io/gRNA_Predictor](https://jana242k4.github.io/gRNA_Predictor)**
 
-AI-powered CRISPR guide RNA (sgRNA) designer with XGBoost-based efficiency prediction, **off-target specificity scoring**, and **Gaussian proximity-weighted ranking** — runs entirely in the browser via pure JavaScript tree traversal, no server or WebAssembly required.
+AI-powered CRISPR guide RNA (sgRNA) designer with XGBoost-based efficiency prediction, **off-target specificity scoring**, and **Gaussian proximity-weighted ranking** — backed by a FastAPI server (Render) for full ML inference, with a pure-JavaScript fallback for offline use.
 
 ---
 
 ## Features
 
 - **XGBoost ML scoring** — 450-dimensional feature model trained on 4,692 experimental guides (Doench 2016 + 2014)
-- **Pure-JS in-browser inference** — model exported as a compact 294 KB JSON tree structure; traversed directly in JavaScript (~3 ms per prediction, zero WASM/memory overhead)
-- **Multi-objective ranking** — `combined_score = efficiency × specificity × proximity_weight`; off-target risk penalises efficiency multiplicatively
+- **FastAPI backend (Render)** — primary inference path; full 450-dim XGBoost with 30-mer context features, cold-start ~30 s after idle
+- **Pure-JS offline fallback** — model exported as 294 KB JSON tree structure; traversed in JavaScript if backend is unreachable (no WASM, no installation)
+- **Multi-objective ranking** — `combined_score = (1−w) × (efficiency × specificity) + w × proximity`; off-target risk penalises efficiency multiplicatively
 - **Novel proximity ranking** — guides re-ranked by Gaussian decay from a user-specified genomic target; adjustable weight *w* optimises the efficiency–proximity tradeoff
 - **Off-target specificity** — sequence-intrinsic heuristic (seed AT content, GC runs, hairpin, G-quadruplex) following Hsu 2013 / Doench 2016
 - **Multi-PAM support** — SpCas9 (NGG/NAG), SaCas9 (NNGRRT), Cas12a (TTTV)
 - **Both strands** — detects guides on forward and reverse complement
-- **Works offline** — no network calls on GitHub Pages; heuristic fallback if model JSON fails to load
+- **Works offline** — pure-JS XGBoost fallback activates automatically if Render backend is unreachable; heuristic scorer if model JSON also unavailable
 
 ---
 
@@ -71,7 +72,7 @@ This tool **quantifies and optimises the efficiency–specificity–proximity tr
 ### Option A — Live demo (no installation)
 
 Open **[jana242k4.github.io/gRNA_Predictor](https://jana242k4.github.io/gRNA_Predictor)**.
-The XGBoost model runs entirely in your browser via pure JavaScript — no WebAssembly, no server, no installation needed.
+Predictions run via the Render FastAPI backend (full XGBoost ML). The first request after 15 min idle may take **30–50 seconds** (Render free-tier cold start) — the spinner will show. If the backend is unreachable, the tool falls back to in-browser pure-JS XGBoost automatically.
 
 ### Option B — Full local stack (backend + frontend)
 
@@ -149,15 +150,15 @@ gRNA_Predictor/
 │   └── create_documentation_pdf.py     # Biology reference PDF
 ├── frontend/
 │   ├── public/
-│   │   ├── xgb_trees.json              # 294 KB model (pure JS inference)
-│   │   └── xgb_model.onnx              # Legacy ONNX (unused in browser)
+│   │   └── xgb_trees.json              # 294 KB model (pure JS offline inference)
 │   └── src/
 │       ├── utils/
-│       │   ├── featureEngineering.js   # 450-dim JS port
+│       │   ├── featureEngineering.js   # 450-dim JS port (offline fallback)
 │       │   ├── sequenceParser.js       # PAM detection JS port
-│       │   ├── xgbPredictor.js         # Pure-JS XGBoost tree traversal
-│       │   └── onnxPredictor.js        # Orchestrator + specificity scorer
-│       └── services/api.js             # API with static-host detection
+│       │   ├── xgbPredictor.js         # Pure-JS XGBoost tree traversal (offline)
+│       │   └── onnxPredictor.js        # Offline orchestrator + specificity scorer
+│       └── services/api.js             # Axios client → Render backend; JS fallback on ERR_NETWORK
+├── render.yaml                         # Render Blueprint (backend auto-deploy)
 └── .github/workflows/
     ├── deploy.yml                      # GitHub Pages auto-deploy
     └── test.yml                        # Backend pytest CI

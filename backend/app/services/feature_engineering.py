@@ -195,7 +195,7 @@ def extract_features(sequence: str,
                     When None or empty, those 40 dims are zero-padded.
 
     Returns:
-        np.ndarray of shape (444,)
+        np.ndarray of shape (450,)
     """
     seq = sequence.upper()[:GUIDE_LEN].ljust(GUIDE_LEN, "N")
 
