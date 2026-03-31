@@ -137,6 +137,19 @@ function heuristicScores(candidates) {
 }
 
 /**
+ * Pre-warm the ONNX Worker by loading the session before the first prediction.
+ * Call this on app mount so WASM is compiled in the background, not when the
+ * user first clicks Predict.
+ */
+export function warmupWorker(modelBase) {
+  if (_onnxFailed) return
+  const modelUrl = `${modelBase}xgb_model.onnx`
+  try {
+    getWorker().postMessage({ type: 'warmup', modelUrl })
+  } catch {}
+}
+
+/**
  * Run in-browser prediction — mirrors the FastAPI /predict response shape.
  *
  * @param {string}      sequence        - DNA sequence

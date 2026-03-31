@@ -24,6 +24,12 @@ async function getSession(modelUrl) {
 }
 
 self.onmessage = async ({ data }) => {
+  // Warmup: pre-load the ONNX session before the first real inference request
+  if (data.type === 'warmup') {
+    try { await getSession(data.modelUrl) } catch {}
+    return
+  }
+
   const { requestId, sequences, thirtyMers, modelUrl } = data
 
   try {
