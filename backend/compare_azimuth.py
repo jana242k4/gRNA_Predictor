@@ -15,7 +15,7 @@ Run from backend/ directory:
 import sys, csv, io, re, pickle, urllib.request
 import numpy as np
 from pathlib import Path
-from scipy.stats import spearmanr, pearsonr
+from scipy.stats import spearmanr, pearsonr, wilcoxon
 from sklearn.metrics import r2_score, mean_absolute_error
 from sklearn.model_selection import train_test_split
 
@@ -95,6 +95,65 @@ def precision_at_k(y_true, y_pred, k, threshold_pct=80):
     top_k_idx = np.argsort(y_pred)[::-1][:k]
     hits = sum(1 for i in top_k_idx if y_true[i] >= threshold)
     return hits / k
+
+
+def permutation_test(y_true: np.ndarray, y_pred_a: np.ndarray,
+                     y_pred_b: np.ndarray, n_perm: int = 10_000,
+                     seed: int = 42) -> dict:
+    """
+    Two-sided permutation test for the difference in Spearman r between two models.
+
+    Tests H0: the two models have equal Spearman correlation with y_true.
+    For each permutation, randomly swaps predictions between the two models
+    for each sample independently (label-shuffling), then recomputes Δr.
+
+    Returns a dict with observed Δr and two-sided p-value.
+
+    Reference: Ojala & Garriga (2010) JMLR 11:1833.
+    """
+    rng     = np.random.default_rng(seed)
+    obs_r_a = spearmanr(y_true, y_pred_a).statistic
+    obs_r_b = spearmanr(y_true, y_pred_b).statistic
+    delta_obs = obs_r_a - obs_r_b
+
+    count = 0
+    for _ in range(n_perm):
+        # For each sample, randomly assign it to either model A or B
+        swap  = rng.integers(0, 2, size=len(y_true)).astype(bool)
+        p_a   = np.where(swap, y_pred_b, y_pred_a)
+        p_b   = np.where(swap, y_pred_a, y_pred_b)
+        delta = spearmanr(y_true, p_a).statistic - spearmanr(y_true, p_b).statistic
+        if abs(delta) >= abs(delta_obs):
+            count += 1
+
+    return {
+        "spearman_r_a":   float(obs_r_a),
+        "spearman_r_b":   float(obs_r_b),
+        "delta_r":        float(delta_obs),
+        "p_value":        float(count / n_perm),
+        "n_perm":         n_perm,
+    }
+
+
+def wilcoxon_error_test(y_true: np.ndarray, y_pred_a: np.ndarray,
+                        y_pred_b: np.ndarray) -> dict:
+    """
+    Wilcoxon signed-rank test on paired absolute errors |y - y_pred|.
+
+    Since both models score the exact same guides, this is a paired test.
+    Tests H0: median(|err_a|) == median(|err_b|).
+
+    Reference: Wilcoxon (1945) Biometrics Bulletin 1:80.
+    """
+    err_a = np.abs(y_true - y_pred_a)
+    err_b = np.abs(y_true - y_pred_b)
+    stat, pval = wilcoxon(err_a, err_b, alternative="two-sided", zero_method="wilcox")
+    return {
+        "mae_a":   float(err_a.mean()),
+        "mae_b":   float(err_b.mean()),
+        "statistic": float(stat),
+        "p_value":   float(pval),
+    }
 
 
 def run():
@@ -177,7 +236,24 @@ def run():
         _print_precision_table(
             [("Azimuth", y_azimuth_test), ("Our XGBoost", y_xgb_test)], y_exp_test
         )
-        _save_results(rows_test, "azimuth_vs_ours_testset.txt", "Held-out test set")
+
+        # ── Statistical significance tests ────────────────────────────────
+        print(f"\n  Statistical significance (held-out, n={sum(mask)} paired guides):")
+        perm = permutation_test(y_exp_test, y_azimuth_test, y_xgb_test, n_perm=10_000)
+        print(f"  Permutation test (Δr = Azimuth − Ours):  "
+              f"Δr = {perm['delta_r']:+.4f},  p = {perm['p_value']:.4f}"
+              f"  ({'significant' if perm['p_value'] < 0.05 else 'not significant'} at α=0.05)")
+
+        wil = wilcoxon_error_test(y_exp_test, y_azimuth_test, y_xgb_test)
+        print(f"  Wilcoxon signed-rank test (paired |errors|):  "
+              f"MAE_azimuth={wil['mae_a']:.4f}  MAE_ours={wil['mae_b']:.4f},  "
+              f"p = {wil['p_value']:.4f}"
+              f"  ({'significant' if wil['p_value'] < 0.05 else 'not significant'} at α=0.05)")
+        print(f"  NOTE: Azimuth has an unfair advantage (trained on 100% Doench incl. these guides).")
+        print(f"        Significance here reflects scale of advantage, not a fair head-to-head.\n")
+
+        _save_results(rows_test, "azimuth_vs_ours_testset.txt", "Held-out test set",
+                      perm_result=perm, wilcoxon_result=wil)
 
     _save_results(rows_full, "azimuth_vs_ours_full.txt", "Full Doench 2016 dataset")
 
@@ -269,7 +345,7 @@ def _print_precision_table(model_preds, y_true, ks=(1, 3, 5, 10)):
     print()
 
 
-def _save_results(rows, filename, subtitle):
+def _save_results(rows, filename, subtitle, perm_result=None, wilcoxon_result=None):
     path = OUT_DIR / filename
     with open(path, "w", encoding="utf-8") as f:
         f.write(f"Azimuth vs Our Model — {subtitle}\n\n")
@@ -278,6 +354,15 @@ def _save_results(rows, filename, subtitle):
         for r in rows:
             f.write(f"{r['name']:<36}  {r['n']:<5}  {r['spearman']:+.4f}      "
                     f"{r['pearson']:+.4f}      {r['r2']:+.4f}   {r['mae']:.4f}\n")
+        if perm_result:
+            f.write(f"\nPermutation test (n_perm={perm_result['n_perm']}):  "
+                    f"delta_r = {perm_result['delta_r']:+.4f},  "
+                    f"p = {perm_result['p_value']:.4f}\n")
+        if wilcoxon_result:
+            f.write(f"Wilcoxon signed-rank test (paired |errors|):  "
+                    f"MAE_azimuth = {wilcoxon_result['mae_a']:.4f},  "
+                    f"MAE_ours = {wilcoxon_result['mae_b']:.4f},  "
+                    f"p = {wilcoxon_result['p_value']:.4f}\n")
     print(f"Saved: {path}")
 
 

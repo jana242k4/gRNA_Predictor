@@ -16,10 +16,17 @@ from pathlib import Path
 from scipy.stats import spearmanr
 from sklearn.model_selection import train_test_split
 
+try:
+    from xgboost import XGBRegressor
+    _USE_XGB = True
+except ImportError:
+    from sklearn.ensemble import GradientBoostingRegressor as XGBRegressor  # type: ignore
+    _USE_XGB = False
+
 sys.path.insert(0, str(Path(__file__).parent))
 
 from app.services.feature_engineering import (
-    extract_features_batch, N_FEATURES, GUIDE_LEN, BASES, DINUCS,
+    extract_features_batch, GUIDE_LEN, BASES, DINUCS,
 )
 
 import shap
@@ -65,6 +72,61 @@ def load_data():
                 scores.append(score)
                 thirty_mers.append(row.get("thirty_mer", "").strip())
     return sequences, np.array(scores, dtype=np.float32), thirty_mers
+
+
+def _make_xgb():
+    """Return a fresh XGBRegressor with the same hyperparameters as train_model.py."""
+    if _USE_XGB:
+        return XGBRegressor(
+            n_estimators=500, learning_rate=0.03, max_depth=5,
+            min_child_weight=3, subsample=0.8, colsample_bytree=0.7,
+            gamma=0.1, reg_alpha=0.05, reg_lambda=1.0,
+            random_state=RANDOM_SEED, n_jobs=-1, verbosity=0,
+        )
+    # sklearn GBM fallback (XGBRegressor was aliased above)
+    return XGBRegressor(
+        n_estimators=300, learning_rate=0.05, max_depth=5,
+        min_samples_leaf=3, subsample=0.8, random_state=RANDOM_SEED,
+    )
+
+
+def true_ablation(X_train, X_test, y_train, y_test, sp_base: float) -> list[tuple]:
+    """
+    True ablation study: for each feature group, zero those dims in BOTH
+    X_train and X_test, retrain a fresh model from scratch, and evaluate
+    on X_test with the same dims zeroed.
+
+    This is the correct ablation design — the model cannot learn to compensate
+    for absent features because they are absent during training too.
+
+    Contrast with the zeroing-only approach in `run()` which merely tests
+    sensitivity of the *already-trained* model to missing features.
+
+    Reference: Lipton & Steinhardt (2018) "Troubling Trends in ML Scholarship".
+    """
+    ablation_rows = []
+    n_groups = len(_GROUPS)
+    for gi, (label, lo, hi) in enumerate(_GROUPS, 1):
+        print(f"  True ablation [{gi}/{n_groups}]: removing '{label}' (dims {lo}:{hi})...")
+        X_tr_abl          = X_train.copy()
+        X_te_abl          = X_test.copy()
+        X_tr_abl[:, lo:hi] = 0.0
+        X_te_abl[:, lo:hi] = 0.0
+
+        m = _make_xgb()
+        if _USE_XGB:
+            m.fit(X_tr_abl, y_train,
+                  eval_set=[(X_te_abl, y_test)], verbose=False)
+        else:
+            m.fit(X_tr_abl, y_train)
+
+        sp_abl = spearmanr(y_test, m.predict(X_te_abl).astype(np.float64)).statistic
+        delta  = sp_base - sp_abl
+        ablation_rows.append((label, float(sp_abl), float(delta)))
+        print(f"    r = {sp_abl:.4f}  (drop = {delta:+.4f})")
+
+    ablation_rows.sort(key=lambda x: x[2], reverse=True)
+    return ablation_rows
 
 
 def run():
@@ -141,31 +203,50 @@ def run():
     plt.close()
     print(f"Saved: {p2}")
 
-    # ── 4. Ablation study ─────────────────────────────────────────────────
-    print("Running ablation study...")
+    # ── 4a. Sensitivity ablation (zeroing on pre-trained model) ──────────
+    print("Running sensitivity ablation (zeroing on pre-trained model)...")
     y_baseline = model.predict(X_test).astype(np.float64)
     sp_base    = spearmanr(y_test, y_baseline).statistic
 
-    ablation_rows = []
+    sensitivity_rows = []
     for label, lo, hi in _GROUPS:
-        X_abl          = X_test.copy()
-        X_abl[:, lo:hi] = 0.0
-        sp_abl         = spearmanr(y_test, model.predict(X_abl).astype(np.float64)).statistic
-        delta          = sp_base - sp_abl
-        ablation_rows.append((label, sp_abl, delta))
+        X_abl           = X_test.copy()
+        X_abl[:, lo:hi]  = 0.0
+        sp_abl           = spearmanr(y_test, model.predict(X_abl).astype(np.float64)).statistic
+        delta            = sp_base - sp_abl
+        sensitivity_rows.append((label, sp_abl, delta))
         print(f"  {label:<35} r={sp_abl:.4f}  (drop={delta:+.4f})")
 
-    ablation_rows.sort(key=lambda x: x[2], reverse=True)
+    sensitivity_rows.sort(key=lambda x: x[2], reverse=True)
 
     p3 = OUT_DIR / "shap_ablation.txt"
     with open(p3, "w", encoding="utf-8") as f:
-        f.write("Ablation Study: Effect of Zeroing Each Feature Group\n")
+        f.write("Sensitivity Ablation: Effect of Zeroing Each Feature Group on Pre-Trained Model\n")
+        f.write("NOTE: This measures model sensitivity, not true feature contribution.\n")
+        f.write("See true_ablation.txt for the correct retrain-based ablation.\n\n")
         f.write(f"Baseline Spearman r = {sp_base:.4f}  (n={len(y_test)} held-out guides)\n\n")
         f.write(f"{'Feature group':<35}  Spearman_ablated  Delta\n")
         f.write(f"{'-'*35}  ----------------  -----\n")
-        for label, sp_abl, delta in ablation_rows:
+        for label, sp_abl, delta in sensitivity_rows:
             f.write(f"{label:<35}  {sp_abl:+.4f}            {delta:+.4f}\n")
     print(f"Saved: {p3}")
+
+    # ── 4b. True ablation (retrain model with each feature group removed) ─
+    print("\nRunning TRUE ablation (retrains model for each feature group)...")
+    print("This takes ~10 minutes. Each of 13 feature groups = 1 full model retrain.\n")
+    true_rows = true_ablation(X_train, X_test, y_train, y_test, sp_base)
+
+    p3b = OUT_DIR / "true_ablation.txt"
+    with open(p3b, "w", encoding="utf-8") as f:
+        f.write("True Ablation Study: Retrain Model with Each Feature Group Removed\n")
+        f.write("Method: zero feature dims in both X_train and X_test, retrain from scratch.\n")
+        f.write("This is the correct ablation — model cannot compensate for absent features.\n\n")
+        f.write(f"Baseline Spearman r = {sp_base:.4f}  (n={len(y_test)} held-out guides)\n\n")
+        f.write(f"{'Feature group':<35}  Spearman_retrained  Delta\n")
+        f.write(f"{'-'*35}  ------------------  -----\n")
+        for label, sp_abl, delta in true_rows:
+            f.write(f"{label:<35}  {sp_abl:+.4f}              {delta:+.4f}\n")
+    print(f"Saved: {p3b}")
 
     # ── 5. Ranked feature importances CSV ─────────────────────────────────
     ranked = sorted(enumerate(mean_abs), key=lambda x: x[1], reverse=True)

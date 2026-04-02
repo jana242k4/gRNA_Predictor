@@ -28,8 +28,9 @@ from scipy.stats import spearmanr, pearsonr
 sys.path.insert(0, str(Path(__file__).parent))
 
 from app.services.feature_engineering import extract_features_batch, BASES
-from sklearn.model_selection import train_test_split
+from sklearn.model_selection import train_test_split, KFold
 from sklearn.metrics import r2_score, mean_absolute_error
+import json
 
 # XGBoost preferred; fall back to sklearn GBM if not installed
 try:
@@ -278,5 +279,106 @@ def train():
     return model
 
 
+def cross_validate_model(n_splits: int = 5) -> dict:
+    """
+    5-fold cross-validation on the full Doench 2016+2014 training dataset.
+
+    Uses KFold(shuffle=True, random_state=RANDOM_SEED) so folds are
+    deterministic and reproducible.  Features are extracted once on the full
+    dataset and then sliced per fold — no redundant re-extraction.
+
+    Returns a dict with per-fold and aggregate Spearman r / Pearson r / MAE.
+    Results are also saved to benchmark_results/cv_results.json.
+    """
+    if not DATA_CSV.exists():
+        print("data/combined_training_data.csv not found — CV requires real data.")
+        print("Run: python download_datasets.py  first.")
+        return {}
+
+    print(f"Loading data for {n_splits}-fold cross-validation...")
+    sequences, scores, thirty_mers = load_real_data(DATA_CSV)
+    print(f"  {len(sequences)} guides loaded.")
+
+    print("Extracting features (once for all folds)...")
+    X = extract_features_batch(sequences, thirty_mers)
+    y = np.array(scores, dtype=np.float32)
+
+    kf = KFold(n_splits=n_splits, shuffle=True, random_state=RANDOM_SEED)
+
+    fold_results = []
+    for fold_i, (train_idx, test_idx) in enumerate(kf.split(X), 1):
+        X_tr, X_te = X[train_idx], X[test_idx]
+        y_tr, y_te = y[train_idx], y[test_idx]
+
+        if _USE_XGB:
+            fold_model = XGBRegressor(
+                n_estimators=500, learning_rate=0.03, max_depth=5,
+                min_child_weight=3, subsample=0.8, colsample_bytree=0.7,
+                gamma=0.1, reg_alpha=0.05, reg_lambda=1.0,
+                random_state=RANDOM_SEED, n_jobs=-1, verbosity=0,
+            )
+            fold_model.fit(X_tr, y_tr, eval_set=[(X_te, y_te)], verbose=False)
+        else:
+            from sklearn.ensemble import GradientBoostingRegressor as _GBR
+            fold_model = _GBR(
+                n_estimators=300, learning_rate=0.05, max_depth=5,
+                min_samples_leaf=3, subsample=0.8, random_state=RANDOM_SEED,
+            )
+            fold_model.fit(X_tr, y_tr)
+
+        y_pred = fold_model.predict(X_te)
+        sp  = float(spearmanr(y_te, y_pred).statistic)
+        pe  = float(pearsonr(y_te, y_pred)[0])
+        mae = float(mean_absolute_error(y_te, y_pred))
+        fold_results.append({"fold": fold_i, "n_test": len(y_te),
+                              "spearman_r": sp, "pearson_r": pe, "mae": mae})
+        print(f"  Fold {fold_i}/{n_splits}:  Spearman r = {sp:.4f}  "
+              f"Pearson r = {pe:.4f}  MAE = {mae:.4f}  (n={len(y_te)})")
+
+    sps  = [r["spearman_r"] for r in fold_results]
+    pes  = [r["pearson_r"]  for r in fold_results]
+    maes = [r["mae"]        for r in fold_results]
+
+    summary = {
+        "n_folds":          n_splits,
+        "n_total":          len(sequences),
+        "spearman_r_mean":  float(np.mean(sps)),
+        "spearman_r_std":   float(np.std(sps, ddof=1)),
+        "pearson_r_mean":   float(np.mean(pes)),
+        "pearson_r_std":    float(np.std(pes, ddof=1)),
+        "mae_mean":         float(np.mean(maes)),
+        "mae_std":          float(np.std(maes, ddof=1)),
+        "folds":            fold_results,
+    }
+
+    print(f"\n{'='*50}")
+    print(f"  {n_splits}-Fold Cross-Validation Summary")
+    print(f"  n = {len(sequences)} guides")
+    print(f"  Spearman r:  {summary['spearman_r_mean']:.4f} ± {summary['spearman_r_std']:.4f}")
+    print(f"  Pearson r:   {summary['pearson_r_mean']:.4f} ± {summary['pearson_r_std']:.4f}")
+    print(f"  MAE:         {summary['mae_mean']:.4f} ± {summary['mae_std']:.4f}")
+    print(f"{'='*50}\n")
+
+    out_dir = Path(__file__).parent / "benchmark_results"
+    out_dir.mkdir(parents=True, exist_ok=True)
+    cv_path = out_dir / "cv_results.json"
+    with open(cv_path, "w", encoding="utf-8") as f:
+        json.dump(summary, f, indent=2)
+    print(f"CV results saved: {cv_path}")
+
+    return summary
+
+
 if __name__ == "__main__":
-    train()
+    import argparse
+    parser = argparse.ArgumentParser()
+    parser.add_argument("--cv", action="store_true",
+                        help="Run 5-fold cross-validation instead of training")
+    parser.add_argument("--cv-folds", type=int, default=5,
+                        help="Number of CV folds (default: 5)")
+    args = parser.parse_args()
+
+    if args.cv:
+        cross_validate_model(n_splits=args.cv_folds)
+    else:
+        train()

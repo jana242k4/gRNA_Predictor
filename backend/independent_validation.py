@@ -156,12 +156,36 @@ def load_training_guides():
     return seqs
 
 
+def bootstrap_ci(y_true: np.ndarray, y_pred: np.ndarray,
+                 n_boot: int = 10_000, ci: float = 0.95,
+                 seed: int = 42) -> tuple[float, float]:
+    """
+    Bootstrap confidence interval for Spearman r.
+
+    Resamples (y_true, y_pred) pairs with replacement n_boot times and
+    computes the Spearman r for each resample.  Returns the (lower, upper)
+    percentile bounds for the given CI level.
+
+    Reference: Efron & Tibshirani (1993) An Introduction to the Bootstrap.
+    """
+    rng = np.random.default_rng(seed)
+    n   = len(y_true)
+    rs  = np.empty(n_boot, dtype=np.float64)
+    for i in range(n_boot):
+        idx    = rng.integers(0, n, size=n)
+        rs[i]  = spearmanr(y_true[idx], y_pred[idx]).statistic
+    alpha = 1.0 - ci
+    return float(np.percentile(rs, 100 * alpha / 2)), float(np.percentile(rs, 100 * (1 - alpha / 2)))
+
+
 def metrics(y_true, y_pred, name):
     sp  = spearmanr(y_true, y_pred).statistic
     pe  = pearsonr(y_true, y_pred)[0]
     r2  = r2_score(y_true, y_pred)
     mae = mean_absolute_error(y_true, y_pred)
-    return {"name": name, "spearman": sp, "pearson": pe, "r2": r2, "mae": mae, "n": len(y_true)}
+    ci_lo, ci_hi = bootstrap_ci(y_true, y_pred)
+    return {"name": name, "spearman": sp, "pearson": pe, "r2": r2, "mae": mae,
+            "n": len(y_true), "ci_lo": ci_lo, "ci_hi": ci_hi}
 
 
 def precision_at_k(y_true, y_pred, k, threshold_pct=80):
@@ -209,7 +233,9 @@ def run():
         X_kim  = extract_features_batch(g_kim, tm_kim)
         yp_kim = model.predict(X_kim).astype(np.float64)
         m_kim  = metrics(y_kim, yp_kim, f"Kim 2019 holdout (n={len(g_kim)})")
-        print(f"  Spearman r (all):   {m_kim['spearman']:+.4f}  Pearson r: {m_kim['pearson']:+.4f}")
+        print(f"  Spearman r (all):   {m_kim['spearman']:+.4f}  "
+              f"95% CI [{m_kim['ci_lo']:+.4f}, {m_kim['ci_hi']:+.4f}]  "
+              f"Pearson r: {m_kim['pearson']:+.4f}")
         _print_precision_at_k(y_kim, yp_kim)
 
         # Novel-only: exclude guides whose sequence appeared in Doench training
@@ -222,8 +248,9 @@ def run():
             X_nov  = extract_features_batch(g_nov, tm_nov)
             yp_nov = model.predict(X_nov).astype(np.float64)
             m_nov  = metrics(y_nov, yp_nov, f"Kim 2019 novel-only (n={n_nov})")
-            print(f"  Spearman r (novel): {m_nov['spearman']:+.4f}  n={n_nov} "
-                  f"({100*n_nov/len(g_kim):.0f}% of holdout)")
+            print(f"  Spearman r (novel): {m_nov['spearman']:+.4f}  "
+                  f"95% CI [{m_nov['ci_lo']:+.4f}, {m_nov['ci_hi']:+.4f}]  "
+                  f"n={n_nov} ({100*n_nov/len(g_kim):.0f}% of holdout)")
             all_results.append(("Kim 2019 (novel only)", m_nov, m_nov))
         else:
             all_results.append(("Kim 2019 (holdout, 20%)", m_kim, m_kim))
@@ -267,8 +294,11 @@ def run():
             import math as _math
             se = 1.0 / _math.sqrt(max(n_all - 3, 1))
             ci_note = f"  *** n={n_all} is small; 95% CI ≈ ±{1.96*se:.2f} — treat with caution ***"
-        print(f"  Spearman r (all guides):   {m_all['spearman']:+.4f}{('  (n='+str(n_all)+')') if n_all < 30 else ''}")
-        print(f"  Spearman r (novel guides): {m_novel['spearman']:+.4f}")
+        print(f"  Spearman r (all guides):   {m_all['spearman']:+.4f}  "
+              f"95% CI [{m_all['ci_lo']:+.4f}, {m_all['ci_hi']:+.4f}]"
+              f"{('  (n='+str(n_all)+')') if n_all < 30 else ''}")
+        print(f"  Spearman r (novel guides): {m_novel['spearman']:+.4f}  "
+              f"95% CI [{m_novel['ci_lo']:+.4f}, {m_novel['ci_hi']:+.4f}]")
         if ci_note:
             print(f"  {ci_note}")
         _print_precision_at_k(y_true, y_pred_all)
@@ -303,11 +333,12 @@ def run():
     with open(p, "w", encoding="utf-8") as f:
         f.write("Independent Cross-Dataset Validation\n")
         f.write("Model trained on: Doench 2016 + Doench 2014 (combined_training_data.csv)\n\n")
-        f.write(f"{'Dataset':<35}  n_all  n_novel  Spearman_all  Spearman_novel  Pearson_all  MAE_all\n")
-        f.write(f"{'-'*35}  -----  -------  ------------  --------------  -----------  -------\n")
+        f.write(f"{'Dataset':<35}  n_all  n_novel  Spearman_all  CI_95_low  CI_95_high  Spearman_novel  Pearson_all  MAE_all\n")
+        f.write(f"{'-'*35}  -----  -------  ------------  ---------  ----------  --------------  -----------  -------\n")
         for name, m_all, m_novel in all_results:
             f.write(f"{name:<35}  {m_all['n']:<5}  {m_novel['n']:<7}  "
-                    f"{m_all['spearman']:+.4f}        {m_novel['spearman']:+.4f}          "
+                    f"{m_all['spearman']:+.4f}        {m_all['ci_lo']:+.4f}     {m_all['ci_hi']:+.4f}      "
+                    f"{m_novel['spearman']:+.4f}          "
                     f"{m_all['pearson']:+.4f}       {m_all['mae']:.4f}\n")
     print(f"\nSaved: {p}")
 
@@ -316,12 +347,18 @@ def run():
         names_plot = [r[0] for r in all_results]
         sp_vals    = [r[1]["spearman"] for r in all_results]
         ns         = [r[1]["n"] for r in all_results]
+        ci_lo      = [r[1]["ci_lo"]    for r in all_results]
+        ci_hi      = [r[1]["ci_hi"]    for r in all_results]
+        yerr_lo    = [max(0.0, sp - lo) for sp, lo in zip(sp_vals, ci_lo)]
+        yerr_hi    = [max(0.0, hi - sp) for sp, hi in zip(sp_vals, ci_hi)]
         # Colour: blue for human, orange for cross-organism
         colors = ["#e05c5c" if "zebrafish" in n.lower() else "#4e79a7" for n in names_plot]
 
         fig, ax = plt.subplots(figsize=(11, 5))
         x = np.arange(len(names_plot))
         bars = ax.bar(x, sp_vals, color=colors, edgecolor="white", linewidth=0.5)
+        ax.errorbar(x, sp_vals, yerr=[yerr_lo, yerr_hi],
+                    fmt="none", color="black", capsize=4, linewidth=1.2)
         ax.set_xticks(x)
         ax.set_xticklabels(names_plot, rotation=30, ha="right", fontsize=9)
         ax.set_ylabel("Spearman r")
