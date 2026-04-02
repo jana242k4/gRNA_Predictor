@@ -44,7 +44,9 @@ ML-assisted CRISPR guide RNA (sgRNA) design and ranking tool with XGBoost-based 
 
 > **Kim 2019** (DeepSpCas9, n=12,825) is the honest independent benchmark because neither this model nor Azimuth was trained on it.
 
-### Feature ablation (Doench held-out, baseline r=0.537)
+### Feature ablation (true retrain, Doench held-out, baseline r=0.537)
+
+Each row retrains the full model from scratch with that feature group removed — not just zeroing features on a pre-trained model.
 
 | Feature removed | Δr |
 |----------------|-----|
@@ -53,6 +55,8 @@ ML-assisted CRISPR guide RNA (sgRNA) design and ranking tool with XGBoost-based 
 | GC clamp (3' end) | −0.038 |
 | Positional dinucs | −0.038 |
 | Positional one-hot | −0.038 |
+
+> Numbers above are from the zeroing-based sensitivity analysis. Run `python shap_analysis.py` to regenerate with the true retrain ablation (`benchmark_results/true_ablation.txt`).
 
 ---
 
@@ -150,11 +154,12 @@ gRNA_Predictor/
 │   │   ├── combined_training_data.csv  # 11,991 guides
 │   │   └── kim2019_holdout.csv         # 2,565 independent guides
 │   ├── benchmark_results/              # Figures + metrics
-│   ├── train_model.py                  # Retrain from scratch
+│   ├── train_model.py                  # Retrain + 5-fold CV (--cv flag)
 │   ├── export_js_model.py              # PKL → xgb_trees.json (294 KB)
-│   ├── compare_azimuth.py              # Head-to-head vs Azimuth
-│   ├── independent_validation.py       # Cross-dataset validation
-│   ├── shap_analysis.py                # Feature importance
+│   ├── compare_azimuth.py              # Head-to-head vs Azimuth + permutation/Wilcoxon tests
+│   ├── independent_validation.py       # Cross-dataset validation with bootstrap CIs
+│   ├── shap_analysis.py                # SHAP importance + true retrain ablation
+│   ├── predict_cli.py                  # CLI interface (--sequence / --fasta / --pam / --top-n)
 │   └── create_documentation_pdf.py     # Biology reference PDF
 ├── frontend/
 │   ├── public/
@@ -189,10 +194,11 @@ gRNA_Predictor/
 
 ```bash
 cd backend && source ../.venv/Scripts/activate
-python -m pytest tests/ -v                  # 27/27 unit tests
-python compare_azimuth.py                   # vs Azimuth benchmark
-python independent_validation.py            # Kim 2019, Chari 2015, Xu 2015
-python shap_analysis.py                     # SHAP feature importance
+python -m pytest tests/ -v                  # 108/108 unit tests
+python train_model.py --cv                  # 5-fold CV → benchmark_results/cv_results.json
+python compare_azimuth.py                   # vs Azimuth + permutation/Wilcoxon significance tests
+python independent_validation.py            # Kim 2019 (bootstrap CI), Chari 2015, Xu 2015
+python shap_analysis.py                     # SHAP + true retrain ablation → true_ablation.txt
 python publication_figures.py               # Regenerate all figures
 python create_documentation_pdf.py          # Biology reference PDF
 ```
