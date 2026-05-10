@@ -7,18 +7,20 @@ const BASE_URL = import.meta.env.VITE_API_BASE_URL || 'http://localhost:8000/api
 
 const apiClient = axios.create({
   baseURL: BASE_URL,
-  // 60 s — Render free tier has a ~30 s cold-start after 15 min idle.
-  // Users see the spinner, then results appear once the backend wakes up.
-  timeout: 60000,
+  // 90 s — Render free tier can take up to ~50 s to cold-start after 15 min idle.
+  timeout: 90000,
   headers: { 'Content-Type': 'application/json' },
 })
+
+// Error codes that mean the backend is simply not reachable — fall back to offline.
+const OFFLINE_CODES = new Set(['ERR_NETWORK', 'ECONNREFUSED', 'ECONNABORTED', 'ERR_BAD_RESPONSE'])
 
 /**
  * Predict top gRNAs for a given DNA sequence.
  *
  * Tries the configured backend (Render in prod, localhost in dev).
- * Falls back to in-browser XGBoost JS inference only if the backend
- * is completely unreachable (network error, not a slow cold start).
+ * Falls back to in-browser XGBoost JS inference when the backend is
+ * unreachable or times out (Render free-tier cold start).
  */
 export async function predictGRNAs(
   sequence,
@@ -41,9 +43,9 @@ export async function predictGRNAs(
     const response = await apiClient.post('/predict', body)
     return response.data
   } catch (err) {
-    // Only fall back to in-browser inference on network errors (backend not reachable).
-    // Timeouts and HTTP errors are surfaced directly so the user knows what happened.
-    if (err.code === 'ERR_NETWORK' || err.code === 'ECONNREFUSED') {
+    // Fall back to in-browser inference when the backend is unreachable or timed out.
+    // HTTP 4xx/5xx errors (bad request, server error) are re-thrown so the user sees them.
+    if (OFFLINE_CODES.has(err.code) || err.code?.startsWith('ERR_NETWORK')) {
       console.info('[gRNA Predictor] Backend unreachable — using in-browser XGBoost JS inference')
       const tgt = body.target_position ?? null
       return predictOffline(

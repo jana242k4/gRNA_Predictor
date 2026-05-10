@@ -40,9 +40,9 @@ export default function App() {
         'An unexpected error occurred.'
       if (typeof msg !== 'string') msg = JSON.stringify(msg)
       if (err.code === 'ECONNABORTED' || msg.toLowerCase().includes('timeout')) {
-        msg = 'Request timed out. Make sure the backend is running: cd backend && uvicorn app.main:app --reload'
+        msg = 'Request timed out. The prediction server may be starting up — please try again in a few seconds.'
       } else if (err.code === 'ERR_NETWORK' || msg.toLowerCase().includes('network')) {
-        msg = 'Cannot reach the backend at http://localhost:8000. Make sure it is running.'
+        msg = 'Cannot reach the prediction server. Please check your connection and try again.'
       }
       setError(msg)
     } finally {
