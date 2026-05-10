@@ -1,8 +1,9 @@
 import { defineConfig } from 'vite'
 import react from '@vitejs/plugin-react'
+import tailwindcss from '@tailwindcss/vite'
 
 export default defineConfig(({ command }) => ({
-  plugins: [react()],
+  plugins: [react(), tailwindcss()],
   // Use '/' for local dev, '/gRNA_Predictor/' for GitHub Pages production build
   base: command === 'build' ? '/gRNA_Predictor/' : '/',
   build: {

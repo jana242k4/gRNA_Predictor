@@ -1,256 +1,158 @@
 import React, { useState } from 'react'
-import {
-  Box,
-  Table,
-  TableBody,
-  TableCell,
-  TableContainer,
-  TableHead,
-  TableRow,
-  Typography,
-  Chip,
-  LinearProgress,
-  Tooltip,
-  Paper,
-  Button,
-  IconButton,
-  Snackbar,
-  Alert,
-} from '@mui/material'
-import EmojiEventsIcon from '@mui/icons-material/EmojiEvents'
-import DownloadIcon from '@mui/icons-material/Download'
-import ContentCopyIcon from '@mui/icons-material/ContentCopy'
-import CheckIcon from '@mui/icons-material/Check'
-import MyLocationIcon from '@mui/icons-material/MyLocation'
+import OmicsPanel from './OmicsPanel'
 
-function ScoreBar({ value, color }) {
-  const pct      = Math.round(value * 100)
-  const barColor = color || (pct >= 70 ? 'success' : pct >= 45 ? 'warning' : 'error')
+function scoreColor(score) {
+  if (score >= 0.65) return 'badge-high'
+  if (score >= 0.40) return 'badge-medium'
+  return 'badge-low'
+}
+
+function gcColor(gc) {
+  if (gc >= 40 && gc <= 70) return 'text-on-surface'
+  return 'text-error'
+}
+
+function ExpandButton({ open, onClick }) {
   return (
-    <Box sx={{ display: 'flex', alignItems: 'center', gap: 1 }}>
-      <LinearProgress
-        variant="determinate"
-        value={pct}
-        color={barColor}
-        sx={{ flex: 1, height: 8, borderRadius: 4 }}
-      />
-      <Typography variant="caption" sx={{ minWidth: 36, color: `${barColor}.main` }}>
-        {pct}%
-      </Typography>
-    </Box>
+    <button
+      onClick={onClick}
+      className="w-7 h-7 flex items-center justify-center rounded-full hover:bg-surface-container-high transition-colors"
+      title={open ? 'Collapse' : 'Show omics data'}
+    >
+      <span className="material-symbols-outlined text-sm text-on-surface-variant">
+        {open ? 'expand_less' : 'expand_more'}
+      </span>
+    </button>
   )
 }
 
-function CopyButton({ text }) {
-  const [copied, setCopied] = useState(false)
-  const handleCopy = async () => {
-    await navigator.clipboard.writeText(text)
-    setCopied(true)
-    setTimeout(() => setCopied(false), 1500)
+function SeqCell({ sequence, pam }) {
+  return (
+    <span className="seq-mono text-xs text-on-surface">
+      {sequence}
+      <span className="pam-highlight ml-0.5">{pam}</span>
+    </span>
+  )
+}
+
+export default function ResultsTable({ data, inputSeq }) {
+  const [expanded, setExpanded] = useState({})
+
+  const guides    = data?.top_grnas ?? []
+  const offline   = data?.offline === true
+  const modelInfo = data?.model_info ?? {}
+
+  const toggle = (idx) => setExpanded(prev => ({ ...prev, [idx]: !prev[idx] }))
+
+  if (guides.length === 0) {
+    return (
+      <div className="bg-surface-container-low rounded-3xl p-6 text-center text-on-surface-variant text-sm">
+        No guide RNAs found. Try a longer sequence or different PAM.
+      </div>
+    )
   }
-  return (
-    <Tooltip title={copied ? 'Copied!' : 'Copy sequence'}>
-      <IconButton size="small" onClick={handleCopy} sx={{ ml: 0.5 }}>
-        {copied
-          ? <CheckIcon fontSize="inherit" sx={{ color: 'success.main' }} />
-          : <ContentCopyIcon fontSize="inherit" sx={{ color: 'text.disabled' }} />}
-      </IconButton>
-    </Tooltip>
-  )
-}
-
-function SpecificityBadge({ value }) {
-  if (value === null || value === undefined) return null
-  const pct   = Math.round(value * 100)
-  const color = pct >= 70 ? 'success' : pct >= 45 ? 'warning' : 'error'
-  const label = pct >= 70 ? 'Low risk' : pct >= 45 ? 'Moderate' : 'High risk'
-  return (
-    <Tooltip title={`Off-target specificity: ${pct}%. Higher = more specific (lower off-target risk).`}>
-      <Chip label={`${label} (${pct}%)`} size="small" color={color} variant="outlined" />
-    </Tooltip>
-  )
-}
-
-function DistanceBadge({ distance }) {
-  if (distance === null || distance === undefined) return null
-  const color = distance <= 25 ? 'success' : distance <= 75 ? 'warning' : 'error'
-  return (
-    <Tooltip title={`${distance} bp from your target position`}>
-      <Chip
-        label={`${distance} bp`}
-        size="small"
-        color={color}
-        variant="outlined"
-        icon={<MyLocationIcon style={{ fontSize: 12 }} />}
-      />
-    </Tooltip>
-  )
-}
-
-function exportCSV(grnas, pamUsed, hasTarget) {
-  const baseHeaders = ['Rank', 'Guide Sequence', 'PAM', 'Position', 'Cut Site', 'Strand', 'GC%', 'Efficiency Score', 'Off-Target Specificity', 'Model']
-  const headers     = hasTarget ? [...baseHeaders, 'Distance to Target (bp)', 'Combined Score'] : baseHeaders
-
-  const rows = grnas.map((g) => {
-    const row = [
-      g.rank, g.sequence, g.pam_sequence, g.position, g.cut_site,
-      g.strand, (g.gc_content * 100).toFixed(1), g.score.toFixed(4),
-      g.off_target_score != null ? g.off_target_score.toFixed(3) : '',
-      g.model_used,
-    ]
-    if (hasTarget) {
-      row.push(g.distance_to_target ?? '')
-      row.push(g.combined_score != null ? g.combined_score.toFixed(4) : '')
-    }
-    return row
-  })
-
-  const csv  = [headers, ...rows].map((r) => r.map((v) => `"${v}"`).join(',')).join('\n')
-  const blob = new Blob([csv], { type: 'text/csv;charset=utf-8;' })
-  const url  = URL.createObjectURL(blob)
-  const link = document.createElement('a')
-  link.href  = url
-  link.setAttribute('download', `grna_predictions_${pamUsed}.csv`)
-  document.body.appendChild(link)
-  link.click()
-  document.body.removeChild(link)
-  URL.revokeObjectURL(url)
-}
-
-export default function ResultsTable({ data }) {
-  const [snackOpen, setSnackOpen] = useState(false)
-  if (!data || !data.top_grnas || data.top_grnas.length === 0) return null
-
-  const hasTarget = data.target_position != null
 
   return (
-    <Box>
-      {/* Header row */}
-      <Box sx={{ display: 'flex', alignItems: 'center', gap: 1, mb: 2, flexWrap: 'wrap' }}>
-        <EmojiEventsIcon sx={{ color: 'secondary.main' }} />
-        <Typography variant="h6">Top Guide RNAs</Typography>
-        <Chip label={`${data.top_grnas.length} of ${data.total_candidates} candidates`} size="small" sx={{ ml: 1 }} />
-        {hasTarget && (
-          <Chip
-            icon={<MyLocationIcon />}
-            label={`Target pos ${data.target_position} · ${Math.round(data.proximity_weight * 100)}% proximity`}
-            size="small"
-            color="warning"
-            variant="outlined"
-          />
+    <div className="flex flex-col gap-4">
+      {/* Summary bar */}
+      <div className="flex items-center gap-4 flex-wrap">
+        <div className="flex items-center gap-2">
+          <span className="material-symbols-outlined text-primary text-lg">check_circle</span>
+          <span className="text-sm text-on-surface font-medium">{guides.length} guides found</span>
+        </div>
+        {offline && (
+          <span className="px-2 py-0.5 rounded text-xs bg-tertiary-container/30 text-tertiary">
+            Offline mode
+          </span>
         )}
-        <Button
-          size="small"
-          variant="outlined"
-          startIcon={<DownloadIcon />}
-          onClick={() => exportCSV(data.top_grnas, data.pam_used, hasTarget)}
-          sx={{ ml: 'auto' }}
-        >
-          Export CSV
-        </Button>
-      </Box>
+        {modelInfo.model && (
+          <span className="text-xs text-on-surface-variant">{modelInfo.model}</span>
+        )}
+        {modelInfo.pearson_r && (
+          <span className="text-xs text-on-surface-variant">Pearson r={modelInfo.pearson_r}</span>
+        )}
+      </div>
 
-      <TableContainer component={Paper} variant="outlined">
-        <Table size="small">
-          <TableHead>
-            <TableRow>
-              <TableCell>#</TableCell>
-              <TableCell>Guide Sequence (5'→3')</TableCell>
-              <TableCell>PAM</TableCell>
-              <TableCell>
-                <Tooltip title="0-indexed start of guide on forward strand"><span>Position</span></Tooltip>
-              </TableCell>
-              <TableCell>
-                <Tooltip title="Predicted genomic cut site (1-indexed). SpCas9 cuts between guide nt 17-18, 3 bp upstream of PAM.">
-                  <span>Cut Site</span>
-                </Tooltip>
-              </TableCell>
-              <TableCell>Strand</TableCell>
-              <TableCell>GC%</TableCell>
-              <TableCell sx={{ minWidth: 140 }}>
-                <Tooltip title="ML efficiency score (0-1). Higher is better."><span>Efficiency</span></Tooltip>
-              </TableCell>
-              <TableCell sx={{ minWidth: 130 }}>
-                <Tooltip title="Heuristic off-target specificity (0-1). Green ≥70% = low risk; yellow 45-70% = moderate; red <45% = high risk. Based on seed-region AT content, GC composition, homopolymers, and hairpin structure.">
-                  <span>Off-Target</span>
-                </Tooltip>
-              </TableCell>
-              {hasTarget && (
-                <>
-                  <TableCell>
-                    <Tooltip title="Distance from cut site to your target position. Green ≤25 bp, yellow ≤75 bp, red >75 bp.">
-                      <span>Distance</span>
-                    </Tooltip>
-                  </TableCell>
-                  <TableCell sx={{ minWidth: 140 }}>
-                    <Tooltip title={`Combined score = ${Math.round((1 - data.proximity_weight) * 100)}% efficiency + ${Math.round(data.proximity_weight * 100)}% proximity (Gaussian decay, σ=50 bp)`}>
-                      <span>Combined Score</span>
-                    </Tooltip>
-                  </TableCell>
-                </>
-              )}
-            </TableRow>
-          </TableHead>
-          <TableBody>
-            {data.top_grnas.map((g) => (
-              <TableRow key={g.rank} sx={{ '&:hover': { bgcolor: 'action.hover' } }}>
-                <TableCell>
-                  <Chip
-                    label={g.rank}
-                    size="small"
-                    color={g.rank === 1 ? 'primary' : 'default'}
-                    variant={g.rank === 1 ? 'filled' : 'outlined'}
-                  />
-                </TableCell>
-                <TableCell>
-                  <Box sx={{ display: 'flex', alignItems: 'center' }}>
-                    <Tooltip title={`Model: ${g.model_used}`}>
-                      <Typography sx={{ fontFamily: 'Roboto Mono, monospace', fontSize: '0.8rem', letterSpacing: '0.05em', color: 'primary.main' }}>
-                        {g.sequence}
-                      </Typography>
-                    </Tooltip>
-                    <CopyButton text={g.sequence} />
-                  </Box>
-                </TableCell>
-                <TableCell>
-                  <Typography sx={{ fontFamily: 'Roboto Mono, monospace', fontSize: '0.8rem', color: 'secondary.main' }}>
-                    {g.pam_sequence}
-                  </Typography>
-                </TableCell>
-                <TableCell>{g.position}</TableCell>
-                <TableCell>
-                  <Typography variant="body2" sx={{ fontFamily: 'Roboto Mono, monospace', fontSize: '0.8rem' }}>
-                    {g.cut_site}
-                  </Typography>
-                </TableCell>
-                <TableCell>
-                  <Chip
-                    label={g.strand === '+' ? '+ (fwd)' : '- (rev)'}
-                    size="small"
-                    color={g.strand === '+' ? 'info' : 'warning'}
-                    variant="outlined"
-                  />
-                </TableCell>
-                <TableCell>{(g.gc_content * 100).toFixed(1)}%</TableCell>
-                <TableCell><ScoreBar value={g.score} /></TableCell>
-                <TableCell><SpecificityBadge value={g.off_target_score} /></TableCell>
-                {hasTarget && (
-                  <>
-                    <TableCell><DistanceBadge distance={g.distance_to_target} /></TableCell>
-                    <TableCell>
-                      {g.combined_score != null && <ScoreBar value={g.combined_score} color="warning" />}
-                    </TableCell>
-                  </>
-                )}
-              </TableRow>
-            ))}
-          </TableBody>
-        </Table>
-      </TableContainer>
+      {/* Table */}
+      <div className="bg-surface-container-low rounded-3xl overflow-hidden">
+        {/* Header */}
+        <div className="hidden sm:grid sm:grid-cols-[2rem_1fr_5rem_3.5rem_3.5rem_4rem_5rem_5rem_2.5rem_2rem]
+                        gap-x-3 px-4 py-2.5 border-b border-outline-variant
+                        text-xs font-medium text-on-surface-variant uppercase tracking-wide">
+          <span>#</span>
+          <span>Sequence + PAM</span>
+          <span>Effic.</span>
+          <span>GC%</span>
+          <span>Spec.</span>
+          <span>Cut</span>
+          <span>Dist.</span>
+          <span>Score</span>
+          <span>Str.</span>
+          <span></span>
+        </div>
 
-      <Snackbar open={snackOpen} autoHideDuration={2000} onClose={() => setSnackOpen(false)}>
-        <Alert severity="success" sx={{ width: '100%' }}>Sequence copied!</Alert>
-      </Snackbar>
-    </Box>
+        {guides.map((g, i) => (
+          <React.Fragment key={i}>
+            <div
+              className={`grid grid-cols-[2rem_1fr_5rem_3.5rem_3.5rem_4rem_5rem_5rem_2.5rem_2rem]
+                          gap-x-3 px-4 py-3 items-center border-b border-outline-variant/40
+                          hover:bg-surface-container-high/40 transition-colors
+                          ${expanded[i] ? 'bg-surface-container-high/20' : ''}`}
+            >
+              <span className="text-xs text-on-surface-variant tabular-nums">{i + 1}</span>
+
+              <SeqCell sequence={g.sequence} pam={g.pam_sequence ?? g.pam ?? ''} />
+
+              {/* Efficiency mini-bar */}
+              <div className="flex items-center gap-1.5">
+                <div className="flex-1 h-1 bg-surface-container-highest rounded-full overflow-hidden">
+                  <div
+                    className="h-full rounded-full bg-primary-container"
+                    style={{ width: `${Math.round((g.efficiency_score ?? g.score ?? 0) * 100)}%` }}
+                  />
+                </div>
+                <span className="text-xs font-mono text-on-surface tabular-nums w-7 text-right">
+                  {((g.efficiency_score ?? g.score ?? 0) * 100).toFixed(0)}
+                </span>
+              </div>
+
+              <span className={`text-xs font-mono tabular-nums ${gcColor(g.gc_content ?? 50)}`}>
+                {(g.gc_content ?? 50).toFixed(0)}%
+              </span>
+
+              <span className="text-xs font-mono tabular-nums text-on-surface">
+                {((g.specificity_score ?? 1) * 100).toFixed(0)}%
+              </span>
+
+              <span className="text-xs font-mono tabular-nums text-on-surface-variant">
+                {g.cut_site ?? '—'}
+              </span>
+
+              <span className="text-xs font-mono tabular-nums text-on-surface-variant">
+                {g.distance_to_target != null ? g.distance_to_target : '—'}
+              </span>
+
+              <span className={`text-xs font-mono tabular-nums px-2 py-0.5 rounded ${scoreColor(g.combined_score ?? g.efficiency_score ?? 0)}`}>
+                {(g.combined_score ?? g.efficiency_score ?? 0).toFixed(3)}
+              </span>
+
+              <span className="text-xs text-on-surface-variant">{g.strand ?? '+'}</span>
+
+              <ExpandButton open={!!expanded[i]} onClick={() => toggle(i)} />
+            </div>
+
+            {expanded[i] && (
+              <div className="px-6 pb-4 bg-surface-container/50 border-b border-outline-variant/40 animate-fade-up">
+                <OmicsPanel sequence={g.sequence} />
+              </div>
+            )}
+          </React.Fragment>
+        ))}
+      </div>
+
+      {modelInfo.citation && (
+        <p className="text-xs text-on-surface-variant px-1">{modelInfo.citation}</p>
+      )}
+    </div>
   )
 }
