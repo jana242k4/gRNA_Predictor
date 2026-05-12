@@ -1,8 +1,8 @@
 import React, { useState } from 'react'
 import OmicsPanel from './OmicsPanel'
 
-function exportCSV(guides, filename = 'grna_results.csv') {
-  const headers = ['Rank','Sequence','PAM','Efficiency%','GC%','Specificity%','Cut site','Distance (bp)','Score','Strand']
+function exportCSV(guides, filename = 'omicscrispr_results.csv') {
+  const headers = ['Rank','Sequence','PAM','Efficiency%','GC%','Specificity%','Cut site','Distance (bp)','Score','Strand','Frameshift est.']
   const rows = guides.map((g, i) => [
     i + 1,
     g.sequence,
@@ -14,6 +14,7 @@ function exportCSV(guides, filename = 'grna_results.csv') {
     g.distance_to_target ?? '',
     (g.combined_score ?? g.efficiency_score ?? 0).toFixed(4),
     g.strand ?? '+',
+    '~67%',
   ])
   const csv = [headers, ...rows].map(r => r.join(',')).join('\n')
   const blob = new Blob([csv], { type: 'text/csv' })
@@ -39,7 +40,7 @@ function ExpandButton({ open, onClick }) {
     <button
       onClick={onClick}
       className="w-7 h-7 flex items-center justify-center rounded-full hover:bg-surface-container-high transition-colors"
-      title={open ? 'Collapse' : 'Show omics data'}
+      title={open ? 'Collapse' : 'Explain score + omics data'}
     >
       <span className="material-symbols-outlined text-sm text-on-surface-variant">
         {open ? 'expand_less' : 'expand_more'}
@@ -56,6 +57,132 @@ function SeqCell({ sequence, pam }) {
     </span>
   )
 }
+
+// ── Per-guide score breakdown ──────────────────────────────────────────────────
+
+function _gc(seq) {
+  if (!seq || !seq.length) return 0
+  return [...seq].filter(b => b === 'G' || b === 'C').length / seq.length
+}
+
+function Factor({ label, value, ok, warn, note }) {
+  const valColor = warn ? 'text-error' : ok ? 'text-primary' : 'text-on-surface'
+  return (
+    <div className="flex flex-col gap-0.5">
+      <span className="text-xs text-on-surface-variant">{label}</span>
+      <span className={`text-xs font-mono font-semibold ${valColor}`}>{value}</span>
+      <span className="text-xs text-on-surface-variant/60">{note}</span>
+    </div>
+  )
+}
+
+function ScoreBreakdown({ guide }) {
+  const seq  = (guide.sequence || '').toUpperCase()
+  const gc   = guide.gc_content ?? _gc(seq) * 100
+  const seedGC  = _gc(seq.slice(-12)) * 100
+  const gcClamp = _gc(seq.slice(-4)) * 100
+  const polyT   = seq.includes('TTTT')
+  const proxGC  = _gc(seq.slice(10, 20)) * 100
+  const spec    = (guide.specificity_score ?? 1) * 100
+
+  const factors = [
+    {
+      label: 'GC content',
+      value: `${gc.toFixed(0)}%`,
+      ok:   gc >= 40 && gc <= 70,
+      warn: gc < 25 || gc > 85,
+      note: '40–70% optimal (Doench 2016)',
+    },
+    {
+      label: "Seed GC (3′ 12 bp)",
+      value: `${seedGC.toFixed(0)}%`,
+      ok:   seedGC >= 35 && seedGC <= 75,
+      warn: seedGC < 20 || seedGC > 90,
+      note: 'Cas9 binding seed region',
+    },
+    {
+      label: "GC clamp (3′ 4 bp)",
+      value: `${gcClamp.toFixed(0)}%`,
+      ok:   gcClamp >= 50,
+      warn: gcClamp === 0,
+      note: "G/C at 3′ end stabilises R-loop",
+    },
+    {
+      label: 'Poly-T stretch',
+      value: polyT ? 'Detected ⚠' : 'None',
+      ok:   !polyT,
+      warn: polyT,
+      note: 'TTTT → Pol-III termination',
+    },
+    {
+      label: 'PAM-proximal GC',
+      value: `${proxGC.toFixed(0)}%`,
+      ok:   proxGC >= 40,
+      warn: proxGC < 20,
+      note: 'Positions 11–20 (seed window)',
+    },
+    {
+      label: 'CFD specificity',
+      value: `${spec.toFixed(0)}%`,
+      ok:   spec >= 80,
+      warn: spec < 50,
+      note: 'Doench 2016 mismatch matrix',
+    },
+  ]
+
+  const specLabel = spec >= 80 ? 'Low off-target risk'
+                  : spec >= 50 ? 'Moderate — verify key sites'
+                  :              'High — experimental validation required'
+  const specColor = spec >= 80 ? 'text-primary' : spec >= 50 ? 'text-tertiary' : 'text-error'
+
+  return (
+    <div className="flex flex-col gap-4">
+      {/* Score factors grid */}
+      <div>
+        <p className="text-xs font-medium text-on-surface-variant uppercase tracking-wide mb-2">
+          Score factors
+        </p>
+        <div className="grid grid-cols-2 sm:grid-cols-3 gap-x-6 gap-y-3">
+          {factors.map(f => <Factor key={f.label} {...f} />)}
+        </div>
+      </div>
+
+      {/* Off-target + repair outcome */}
+      <div className="flex flex-wrap gap-6 pt-2 border-t border-outline-variant/30">
+        <div className="flex flex-col gap-0.5">
+          <span className="text-xs text-on-surface-variant uppercase tracking-wide font-medium">Off-target</span>
+          <span className={`text-xs font-semibold ${specColor}`}>{specLabel}</span>
+          <span className="text-xs text-on-surface-variant/60">Sequence-intrinsic only — no genome-wide search</span>
+        </div>
+
+        <div className="flex flex-col gap-0.5">
+          <span className="text-xs text-on-surface-variant uppercase tracking-wide font-medium">Frameshift probability</span>
+          <span className="text-xs font-semibold text-on-surface">~67% (typical SpCas9 NHEJ)</span>
+          <span className="text-xs text-on-surface-variant/60">Higher microhomology → more in-frame deletions</span>
+        </div>
+
+        <div className="flex flex-col gap-0.5">
+          <span className="text-xs text-on-surface-variant uppercase tracking-wide font-medium">Prediction uncertainty</span>
+          <span className="text-xs font-semibold text-on-surface">Scores ≤ 0.05 apart are not meaningfully different</span>
+          <span className="text-xs text-on-surface-variant/60">Model Pearson r = 0.708 on independent test set</span>
+        </div>
+      </div>
+
+      {/* Organism scope notice */}
+      <div className="flex items-start gap-2 bg-surface-container px-3 py-2 rounded-xl text-xs text-on-surface-variant">
+        <span className="material-symbols-outlined text-sm mt-0.5 flex-shrink-0">info</span>
+        <span>
+          Efficiency model trained on <strong className="text-on-surface">human cell lines</strong> (HEK293, K562) using Doench 2016 + 2014 + Kim 2019 data.
+          Predictions for non-human organisms (plants, zebrafish, bacteria) are less reliable.
+          Wet-lab validation is always required before experimental use.
+        </span>
+      </div>
+    </div>
+  )
+}
+
+
+// ── Main table ─────────────────────────────────────────────────────────────────
 
 export default function ResultsTable({ data, inputSeq }) {
   const [expanded, setExpanded] = useState({})
@@ -91,8 +218,11 @@ export default function ResultsTable({ data, inputSeq }) {
           <span className="text-xs text-on-surface-variant">{modelInfo.model}</span>
         )}
         {modelInfo.pearson_r && (
-          <span className="text-xs text-on-surface-variant">Pearson r={modelInfo.pearson_r}</span>
+          <span className="text-xs text-on-surface-variant">r={modelInfo.pearson_r}</span>
         )}
+        <span className="text-xs text-on-surface-variant/60 hidden sm:inline">
+          Human cell lines · Expand any row to explain score
+        </span>
         <button
           onClick={() => exportCSV(guides)}
           className="ml-auto flex items-center gap-1.5 px-3 py-1.5 rounded-full text-xs font-medium
@@ -173,8 +303,14 @@ export default function ResultsTable({ data, inputSeq }) {
             </div>
 
             {expanded[i] && (
-              <div className="px-6 pb-4 bg-surface-container/50 border-b border-outline-variant/40 animate-fade-up">
-                <OmicsPanel sequence={g.sequence} />
+              <div className="px-6 py-4 bg-surface-container/50 border-b border-outline-variant/40 animate-fade-up flex flex-col gap-5">
+                <ScoreBreakdown guide={g} />
+                <div className="border-t border-outline-variant/30 pt-4">
+                  <p className="text-xs font-medium text-on-surface-variant uppercase tracking-wide mb-3">
+                    Cell-type suitability (OmicsCRISPR)
+                  </p>
+                  <OmicsPanel sequence={g.sequence} />
+                </div>
               </div>
             )}
           </React.Fragment>

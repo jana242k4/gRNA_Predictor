@@ -141,6 +141,16 @@ export default function SequenceInputCard({ onPredict, loading, error }) {
         </div>
       </div>
 
+      {/* Organism scope notice */}
+      <div className="flex items-start gap-2 bg-surface-container px-3 py-2.5 rounded-xl text-xs text-on-surface-variant">
+        <span className="material-symbols-outlined text-sm flex-shrink-0 mt-0.5">info</span>
+        <span>
+          Efficiency model optimised for <strong className="text-on-surface">human cell lines</strong> (Doench 2016 + 2014, Kim 2019).
+          Accuracy is lower for plants, bacteria, zebrafish, or non-SpCas9/SaCas9/Cas12a nucleases.
+          Always validate selected guides experimentally.
+        </span>
+      </div>
+
       {/* Cell type chips */}
       <div className="flex flex-col gap-2">
         <label className="text-xs font-medium text-on-surface-variant uppercase tracking-wide">
