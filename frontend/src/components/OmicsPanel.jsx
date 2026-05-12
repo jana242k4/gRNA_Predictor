@@ -10,7 +10,15 @@ const CELL_COLORS = {
 }
 
 function SuitBar({ value, color }) {
-  const pct = Math.round((value ?? 0.5) * 100)
+  if (value == null) {
+    return (
+      <div className="flex items-center gap-2">
+        <div className="flex-1 h-1.5 bg-surface-container-highest rounded-full" />
+        <span className="text-xs font-mono text-on-surface-variant w-8 text-right">N/A</span>
+      </div>
+    )
+  }
+  const pct = Math.round(value * 100)
   return (
     <div className="flex items-center gap-2">
       <div className="flex-1 h-1.5 bg-surface-container-highest rounded-full overflow-hidden">
@@ -112,6 +120,11 @@ export default function OmicsPanel({ sequence }) {
       <div>
         <p className="text-xs font-medium text-on-surface-variant uppercase tracking-wide mb-2">
           Cell-type suitability
+          {!data.in_depmap && (
+            <span className="ml-2 normal-case font-normal text-on-surface-variant/60">
+              — guide not in DepMap library, scores unavailable
+            </span>
+          )}
         </p>
         <div className="flex flex-col gap-2">
           {(data.predictions ?? []).map(pred => (
