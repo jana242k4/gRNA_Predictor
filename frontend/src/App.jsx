@@ -2,6 +2,7 @@ import React, { useState, useCallback } from 'react'
 import SequenceInputCard from './components/SequenceInputCard'
 import ResultsTable from './components/ResultsTable'
 import GeneExplorer from './components/GeneExplorer'
+import BenchmarkPanel from './components/BenchmarkPanel'
 import { predictGRNAs } from './services/api'
 
 const TABS = ['Guide Design', 'Gene Explorer']
@@ -93,6 +94,7 @@ export default function App() {
             {results && (
               <ResultsTable data={results} inputSeq={inputSeq} />
             )}
+            <BenchmarkPanel />
           </div>
         )}
         {activeTab === 1 && <GeneExplorer />}

@@ -69,7 +69,7 @@ export function nearestNeighborTm(seq, oligoConcNM = 250.0) {
 }
 
 function tmNorm(seq) {
-  if (!seq || seq.length < 4) return 0.0
+  if (!seq || seq.length < 2) return 0.0
   const tm = nearestNeighborTm(seq)
   return Math.min(1.0, Math.max(0.0, (tm - TM_MIN) / (TM_MAX - TM_MIN)))
 }
@@ -131,22 +131,31 @@ function gcClamp(seq) {
   return gc / 4.0
 }
 
-function hairpinProxy(seq) {
-  const s = seq.toUpperCase()
+function tmAsymmetry(seq) {
+  const tm5 = nearestNeighborTm(seq.slice(0, 10))
+  const tm3 = nearestNeighborTm(seq.slice(10, 20))
+  return Math.min(1.0, Math.max(0.0, Math.abs(tm5 - tm3) / 20.0))
+}
+
+function seedDeltaG(seq) {
+  // ΔG at 37°C for last 8 bp (seed window), normalised to [0,1]
+  // ΔG = ΔH - T·ΔS using SantaLucia 1998 NN params; range ~[-4.5, 0.5] kcal/mol
+  const s = seq.toUpperCase().slice(-8)
   const n = s.length
-  let maxStem = 0
-  for (let i = 0; i < n - 8; i++) {
-    for (let stemLen = 2; i + stemLen * 2 + 4 <= n; stemLen++) {
-      const arm5 = s.slice(i, i + stemLen)
-      const arm3Start = i + stemLen + 4
-      const arm3 = s.slice(arm3Start, arm3Start + stemLen)
-      // Check if arm3 is reverse complement of arm5
-      let rc = ''
-      for (let k = arm3.length - 1; k >= 0; k--) rc += COMPLEMENT[arm3[k]] || 'N'
-      if (arm5 === rc) maxStem = Math.max(maxStem, stemLen)
-    }
+  if (n < 2) return 0.0
+  const T_K = 310.15  // 37°C in Kelvin
+  let dH = 0.0, dS = 0.0
+  for (let i = 0; i < n - 1; i++) {
+    const di = s[i] + s[i + 1]
+    if (di in NN) { dH += NN[di][0]; dS += NN[di][1] }
   }
-  return Math.min(1.0, maxStem / 10.0)
+  for (const end of [s[0], s[n - 1]]) {
+    if (end === 'A' || end === 'T') { dH += 2.3; dS += 4.1 }
+    else if (end === 'G' || end === 'C') { dH += 0.1; dS -= 2.8 }
+  }
+  const dG = dH - T_K * (dS / 1000.0)
+  const DG_MIN = -4.5, DG_MAX = 0.5
+  return Math.min(1.0, Math.max(0.0, (dG - DG_MAX) / (DG_MIN - DG_MAX)))
 }
 
 function microhomology(thirtyMer) {
@@ -192,24 +201,23 @@ export function extractFeatures(sequence, thirtyMer = '') {
     downstream = new Float32Array(24)
   }
 
-  const gcClampV = new Float32Array([gcClamp(seq)])       // 1
-  const hairpin  = new Float32Array([hairpinProxy(seq)])  // 1
-  const mhScore  = new Float32Array([microhomology(thirtyMer || '')]) // 1
+  const gcClampV = new Float32Array([gcClamp(seq)])                    // 1 dim 444
+  const tmAsym   = new Float32Array([tmAsymmetry(seq)])               // 1 dim 445
+  const mhScore  = new Float32Array([microhomology(thirtyMer || '')])  // 1 dim 446
 
-  const tmDistal    = new Float32Array([tmNorm(seq.slice(0, 8))])   // 1
-  const tmProximal  = new Float32Array([tmNorm(seq.slice(12))])     // 1
-  const tmCtx       = thirtyMer && thirtyMer.length >= 30
+  const tmDistal = new Float32Array([tmNorm(seq.slice(0, 8))])         // 1 dim 447
+  const seedDG   = new Float32Array([seedDeltaG(seq)])                 // 1 dim 448
+  const tmCtx    = thirtyMer && thirtyMer.length >= 30
     ? new Float32Array([tmNorm(thirtyMer.toUpperCase())])
-    : new Float32Array(1)                                            // 1
+    : new Float32Array(1)                                              // 1 dim 449
 
-  // Strand-specific GC split (dims 450-451)
-  const proxGC  = new Float32Array([gcContent(seq.slice(10, 20))])  // PAM-proximal 10bp
-  const distalGC = new Float32Array([gcContent(seq.slice(0, 10))])  // PAM-distal 10bp
+  const proxGC   = new Float32Array([gcContent(seq.slice(10, 20))])   // 1 dim 450
+  const distalGC = new Float32Array([gcContent(seq.slice(0, 10))])    // 1 dim 451
 
   // Concatenate all into a single Float32Array of length 452
   const parts = [onehot, gc, tm, dinuc, seedGC, polyT, posDinuc,
-                 upstream, downstream, gcClampV, hairpin, mhScore,
-                 tmDistal, tmProximal, tmCtx, proxGC, distalGC]
+                 upstream, downstream, gcClampV, tmAsym, mhScore,
+                 tmDistal, seedDG, tmCtx, proxGC, distalGC]
   const total = parts.reduce((s, p) => s + p.length, 0)
   const result = new Float32Array(total)
   let offset = 0

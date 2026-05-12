@@ -63,10 +63,6 @@ _PAM_SCORES: dict[str, float] = {
 # Guide base → complement (DNA target base) for match detection
 _COMPLEMENT = {"A": "T", "C": "G", "G": "C", "T": "A"}
 
-# DNA↔RNA base mapping for CFD key construction
-_RNA = {"A": "A", "C": "C", "G": "G", "T": "U"}  # T in guide = U in RNA
-
-
 def cfd_score(guide: str, off_target: str, pam: str = "NGG") -> float:
     """
     Compute CFD (Cutting Frequency Determination) score for a given
@@ -92,8 +88,8 @@ def cfd_score(guide: str, off_target: str, pam: str = "NGG") -> float:
 
     score = 1.0
     for i, (g_base, ot_base) in enumerate(zip(guide, ot)):
-        if g_base == ot_base or _COMPLEMENT.get(g_base) == ot_base:
-            continue  # match (Watson-Crick)
+        if g_base == ot_base:
+            continue  # same protospacer base = Watson-Crick match
         # Build mismatch key: rRNA_base:dDNA_base
         r_base = g_base   # guide RNA base (same letter as DNA spacer)
         d_base = ot_base  # DNA target base
@@ -112,8 +108,8 @@ def cfd_score(guide: str, off_target: str, pam: str = "NGG") -> float:
 _COMPLEMENT_STR = str.maketrans("ACGT", "TGCA")
 
 # CFD-derived position specificity weights (averaged across mismatch types).
-# High value = mismatch at this position strongly disrupts activity (i.e. safe).
-# Low value = mismatch tolerated (off-target risk at this position).
+# High value = mismatch tolerated at this position (off-target risk is higher).
+# Low value = mismatch strongly disrupts activity (safer position).
 # Positions 1–20, PAM-distal → PAM-proximal.
 # Derived from the mean of non-zero CFD values per position from Table S19.
 _POSITION_WEIGHTS = [

@@ -147,3 +147,42 @@ def count_off_target_risk_bases(sequence: str) -> int:
     """
     seed = sequence[-12:].upper()
     return seed.count("A") + seed.count("T")
+
+
+def seed_delta_g(sequence: str, temp_c: float = 37.0) -> float:
+    """
+    Full-duplex ΔG (kcal/mol) for the PAM-proximal seed window (last 8 bp).
+
+    ΔG = ΔH - T·ΔS  using SantaLucia 1998 nearest-neighbor parameters at temp_c.
+    More negative ΔG = more thermodynamically stable seed duplex.
+
+    Using ΔG rather than Tm is more physically meaningful for short 8-mers:
+    Tm is designed for oligonucleotides ≥12 bp, whereas ΔG at 37°C directly
+    reflects the free-energy cost of seed-region strand invasion by Cas9.
+
+    Reference: SantaLucia 1998 PNAS 95:1460; Freier et al. 1986 PNAS 83:9373.
+    """
+    seq = sequence.upper()[-8:]
+    n   = len(seq)
+    if n < 2:
+        return 0.0
+
+    T_K = temp_c + 273.15
+    dH  = 0.0  # kcal/mol
+    dS  = 0.0  # cal/mol·K
+
+    for i in range(n - 1):
+        di = seq[i:i + 2]
+        if di in _NN:
+            h, s = _NN[di]
+            dH  += h
+            dS  += s
+
+    for end in (seq[0], seq[-1]):
+        if end in ("A", "T"):
+            dH += 2.3;  dS += 4.1
+        elif end in ("G", "C"):
+            dH += 0.1;  dS -= 2.8
+
+    dS_kcal = dS / 1000.0
+    return round(dH - T_K * dS_kcal, 4)

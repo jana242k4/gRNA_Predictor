@@ -46,6 +46,60 @@ router = APIRouter()
 _CAS12A_PAMS    = {"TTTV"}
 _PROXIMITY_SIGMA = 50.0   # bp — controls how fast proximity decays with distance
 
+_BENCHMARK_DATA = {
+    "tools": [
+        {
+            "name": "gRNA Predictor (this tool)",
+            "model": "XGBoost 452-dim, Doench 2016+2014+Kim2019",
+            "pearson_doench_heldout": 0.537,
+            "n_doench_heldout": 938,
+            "pearson_kim2019_novel": 0.640,
+            "n_kim2019_novel": 1828,
+            "spearman_all": 0.695,
+            "n_all": 11991,
+            "note": "Clean 80/20 split — held-out guides never seen during training",
+        },
+        {
+            "name": "Azimuth (Rule Set 2)",
+            "model": "Gradient boosting, Doench 2016 features",
+            "pearson_doench_heldout": 0.654,
+            "n_doench_heldout": None,
+            "pearson_kim2019_novel": None,
+            "n_kim2019_novel": None,
+            "spearman_all": None,
+            "n_all": None,
+            "note": "* Trained on 100% of Doench 2016 — no true held-out set; r=0.654 is inflated",
+        },
+        {
+            "name": "CRISPOR",
+            "model": "Position-weighted scoring rules",
+            "pearson_doench_heldout": None,
+            "n_doench_heldout": None,
+            "pearson_kim2019_novel": None,
+            "n_kim2019_novel": None,
+            "spearman_doench": 0.47,
+            "note": "Spearman r=0.47 on Doench 2016 full set",
+        },
+        {
+            "name": "CRISPRscan",
+            "model": "Linear model (Moreno-Mateos 2015)",
+            "pearson_doench_heldout": None,
+            "n_doench_heldout": None,
+            "pearson_kim2019_novel": None,
+            "n_kim2019_novel": None,
+            "pearson_doench": 0.43,
+            "note": "Pearson r=0.43 on Doench 2016 full set",
+        },
+    ],
+    "caveats": [
+        "Azimuth r=0.654 on Doench data is inflated: Azimuth was trained on 100% of Doench 2016, "
+        "including the guides used as 'held-out' in this comparison.",
+        "Kim2019 novel-only (n=1,828) is the fairest independent benchmark: 0% overlap with Doench training data.",
+        "CRISPOR and CRISPRscan numbers are from published evaluations on the full Doench 2016 dataset "
+        "(no train/test split), so direct comparison should be interpreted cautiously.",
+    ],
+}
+
 
 def _cut_site(candidate: dict, pam: str) -> int:
     """
@@ -156,3 +210,9 @@ def predict_grnas(request: Request, req: PredictRequest):
         target_position=target,
         proximity_weight=w if target is not None else None,
     )
+
+
+@router.get("/benchmark")
+def get_benchmark():
+    """Static benchmark comparison — this tool vs Azimuth, CRISPOR, CRISPRscan."""
+    return _BENCHMARK_DATA

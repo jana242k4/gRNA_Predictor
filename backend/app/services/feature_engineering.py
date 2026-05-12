@@ -12,10 +12,10 @@ Feature vector (452 dimensions total):
   [404:420] 4-bp upstream context one-hot  — positions -4,-3,-2,-1
   [420:444] 6-bp downstream context one-hot — PAM+3 bp after (positions +1…+6)
   [444]     GC clamp — GC fraction in last 4 bp (3' end of guide, PAM-proximal)
-  [445]     RNA hairpin proxy — longest internal complement stem / 10 (0-1)
+  [445]     Tm asymmetry — abs(Tm(guide[0:10]) − Tm(guide[10:20])) / 20, normalised 0-1
   [446]     Microhomology length — max homology at SpCas9 cut site (0-1, from 30-mer)
   [447]     Tm of PAM-distal half (guide positions 0:8), normalised 0-1
-  [448]     Tm of seed region (guide positions 12:20), normalised 0-1
+  [448]     Seed region ΔG — duplex free energy of guide[12:20] at 37°C, normalised 0-1
   [449]     Tm of full 30-mer context, normalised 0-1 (0 if 30-mer unavailable)
   [450]     PAM-proximal 10bp GC (positions 11–20, non-template strand)
   [451]     PAM-distal 10bp GC (positions 1–10, non-template strand)
@@ -32,13 +32,13 @@ Biological references:
   - Position-specific dinucs:       Doench 2016 Azimuth feature set
   - Flanking context:               Doench 2016 (30-mer); Kim et al. 2019
   - GC clamp (3' end):              Doench et al. 2016 (3'-end GC composition)
-  - RNA hairpin proxy:              Zuker 2003; Lorenz et al. 2011 (ViennaRNA)
+  - Tm asymmetry (5'/3' halves):    proxy for guide folding asymmetry; replaces hairpin heuristic
   - Microhomology:                  Bae et al. 2014 Genome Research 24:132
   - Segmented Tm windows:           Doench 2016 Azimuth (4 Tm sub-windows)
 """
 import numpy as np
 from typing import List, Optional
-from app.utils.biology_utils import nearest_neighbor_tm, seed_region_gc, has_poly_t
+from app.utils.biology_utils import nearest_neighbor_tm, seed_region_gc, has_poly_t, seed_delta_g
 
 BASES     = ["A", "C", "G", "T"]
 DINUCS    = [a + b for a in BASES for b in BASES]   # 16 dinucleotides
@@ -119,7 +119,7 @@ def _tm_segment(segment: str) -> float:
       - Full 30-mer context (when available)
     Returns 0.0 for segments shorter than 4 bases.
     """
-    if len(segment) < 4:
+    if len(segment) < 2:
         return 0.0
     tm = nearest_neighbor_tm(segment)
     return float(np.clip((tm - _TM_MIN) / (_TM_MAX - _TM_MIN), 0.0, 1.0))
@@ -149,30 +149,17 @@ def _gc_clamp(sequence: str) -> float:
     return (tail.count("G") + tail.count("C")) / 4.0
 
 
-def _hairpin_proxy(sequence: str) -> float:
-    """RNA secondary structure proxy: longest internal complementary stem / 10.
+def _tm_asymmetry(sequence: str) -> float:
+    """Thermodynamic asymmetry between 5' and 3' halves of the guide.
 
-    Approximates the tendency for the guide RNA to form internal hairpins that
-    compete with target binding.  Uses reverse-complement matching with a minimum
-    loop of 4 unpaired bases.  Normalised to [0, 1] (capped at stem ≥ 10 bp).
+    abs(Tm(guide[0:10]) − Tm(guide[10:20])) normalised by 20°C practical max.
+    Guides with a cool 5' end and warm 3' (seed) end show better R-loop formation
+    and cleavage efficiency.  More informative than binary hairpin detection.
+    Normalised to [0, 1].
     """
-    seq = sequence.upper()
-    n   = len(seq)
-    max_stem = 0
-    for i in range(n - 8):          # stem start (5' arm)
-        for stem_len in range(2, (n - i) // 2 + 1):
-            arm5 = seq[i: i + stem_len]
-            # loop must be ≥ 4 nt; 3' arm starts at i + stem_len + 4
-            arm3_start = i + stem_len + 4
-            arm3_end   = arm3_start + stem_len
-            if arm3_end > n:
-                break
-            arm3 = seq[arm3_start: arm3_end]
-            # arm3 must be the reverse complement of arm5
-            rc = "".join(_COMPLEMENT.get(b, "N") for b in reversed(arm3))
-            if arm5 == rc:
-                max_stem = max(max_stem, stem_len)
-    return min(1.0, max_stem / 10.0)
+    tm_5 = nearest_neighbor_tm(sequence[:10])
+    tm_3 = nearest_neighbor_tm(sequence[10:20])
+    return float(np.clip(abs(tm_5 - tm_3) / 20.0, 0.0, 1.0))
 
 
 def _microhomology(thirty_mer: str) -> float:
@@ -234,32 +221,35 @@ def extract_features(sequence: str,
         downstream = np.zeros(24, dtype=np.float32)                 # 24
 
     # Advanced biological features
-    gc_clamp  = np.array([_gc_clamp(seq)],                  dtype=np.float32)  # 1
-    hairpin   = np.array([_hairpin_proxy(seq)],              dtype=np.float32)  # 1
-    mh_score  = np.array([_microhomology(thirty_mer or "")], dtype=np.float32)  # 1
+    gc_clamp    = np.array([_gc_clamp(seq)],                  dtype=np.float32)  # 1
+    tm_asym     = np.array([_tm_asymmetry(seq)],              dtype=np.float32)  # 1  dim 445
+    mh_score    = np.array([_microhomology(thirty_mer or "")], dtype=np.float32)  # 1
 
-    # Segmented Tm windows (extending Doench 2016 Table S1 segmented-Tm approach):
-    #   PAM-distal window : guide positions  0- 7 (8 bp, 5' end)
-    #   PAM-proximal 8 bp : guide positions 12-19 (8 bp, 3' end / partial seed)
-    #     NOTE: this is a windowed feature covering the distal half of the
-    #     canonical 12-bp seed region (positions 9-20).  It is deliberately
-    #     narrower than the full seed to capture Tm variation near the PAM.
-    #     Off-target specificity (off_target.py) uses the full 12-bp seed.
-    #   Full 30-mer context: upstream(4) + guide(20) + PAM+downstream(6)
-    tm_pam_distal        = np.array([_tm_segment(seq[:8])],         dtype=np.float32)  # 1
-    tm_pam_proximal_8bp  = np.array([_tm_segment(seq[12:])],        dtype=np.float32)  # 1
+    # Segmented Tm / thermodynamic windows:
+    #   dim 447: PAM-distal Tm (guide[0:8])
+    #   dim 448: seed region ΔG at 37°C (guide[12:20]), normalised 0-1
+    #            more negative ΔG = more stable seed duplex → higher value
+    #   dim 449: full 30-mer Tm context (0 if unavailable)
+    tm_pam_distal = np.array([_tm_segment(seq[:8])], dtype=np.float32)           # 1
+
+    # Normalise seed ΔG: practical range ~[-4.5, 0.5] kcal/mol → map to [0,1]
+    _DG_MIN, _DG_MAX = -4.5, 0.5
+    raw_dg = seed_delta_g(seq)
+    seed_dg = np.array([float(np.clip((raw_dg - _DG_MAX) / (_DG_MIN - _DG_MAX), 0.0, 1.0))],
+                        dtype=np.float32)                                          # 1
+
     if thirty_mer and len(thirty_mer) >= 30:
-        tm_ctx = np.array([_tm_segment(thirty_mer.upper())], dtype=np.float32)  # 1
+        tm_ctx = np.array([_tm_segment(thirty_mer.upper())], dtype=np.float32)   # 1
     else:
-        tm_ctx = np.zeros(1, dtype=np.float32)                                  # 1
+        tm_ctx = np.zeros(1, dtype=np.float32)                                   # 1
 
-    prox_gc  = np.array([_proximal_gc(seq)], dtype=np.float32)   # 1
-    distal_gc = np.array([_distal_gc(seq)], dtype=np.float32)   # 1
+    prox_gc   = np.array([_proximal_gc(seq)],  dtype=np.float32)                 # 1
+    distal_gc = np.array([_distal_gc(seq)],    dtype=np.float32)                 # 1
 
     return np.concatenate(
         [onehot, gc, tm, dinuc, seed_gc, poly_t, pos_dinuc,
-         upstream, downstream, gc_clamp, hairpin, mh_score,
-         tm_pam_distal, tm_pam_proximal_8bp, tm_ctx,
+         upstream, downstream, gc_clamp, tm_asym, mh_score,
+         tm_pam_distal, seed_dg, tm_ctx,
          prox_gc, distal_gc]
     )   # 452
 

@@ -7,7 +7,7 @@ from pathlib import Path
 sys.path.insert(0, str(Path(__file__).parent.parent))
 
 from app.services.off_target import (
-    specificity_score,
+    specificity_score, cfd_score,
     _seed_at_content, _pam_proximal_gc_run,
     _has_hairpin, _sequence_entropy, _complexity_penalty,
 )
@@ -124,3 +124,40 @@ def test_seed_at_content_all_gc():
     seq = "ATATATATGCGCGCGCGCGCGC"[:20]  # last 12: all GC
     val = _seed_at_content(seq)
     assert val == 0.0
+
+
+# ── CFD score ──────────────────────────────────────────────────────────────
+
+def test_cfd_perfect_match_is_one():
+    guide = "ATCGATCGATCGATCGATCG"
+    assert cfd_score(guide, guide) == 1.0
+
+
+def test_cfd_complement_is_mismatch():
+    # guide=T at pos 0, off-target=A → protospacer mismatch (rT:dA weight=0.060)
+    guide = "TCGATCGATCGATCGATCGA"
+    ot    = "ACGATCGATCGATCGATCGA"
+    score = cfd_score(guide, ot)
+    assert 0.0 < score < 1.0
+
+
+def test_cfd_zero_weight_mismatch_is_zero():
+    # rA:dC has all-zero weights in the CFD matrix → score = 0
+    guide = "ATCGATCGATCGATCGATCG"
+    ot    = "CTCGATCGATCGATCGATCG"  # A→C at pos 0 (rA:dC)
+    assert cfd_score(guide, ot) == 0.0
+
+
+def test_cfd_non_ngg_pam_reduces_score():
+    guide = "ATCGATCGATCGATCGATCG"
+    ngg   = cfd_score(guide, guide, pam="NGG")
+    nag   = cfd_score(guide, guide, pam="NAG")
+    assert ngg > nag > 0.0
+
+
+def test_cfd_complement_not_treated_as_match():
+    # Regression: complement base must NOT be skipped as a match.
+    # guide G at pos 0, off-target C (complement of G) → mismatch rG:dC (weight=0)
+    guide = "GCGATCGATCGATCGATCGA"
+    ot    = "CCGATCGATCGATCGATCGA"  # G→C at pos 0
+    assert cfd_score(guide, ot) == 0.0
