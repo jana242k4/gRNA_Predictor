@@ -1,0 +1,26 @@
+{
+  "version": "v2 (three-branch)",
+  "architecture": {
+    "branch1": "CNN: Conv1d(4->64->128->128) + MaxPool + FC(512->128)",
+    "branch2": "MLP: FC(450->256->128) on precomputed features",
+    "branch3": "MLP: FC(5->64->32) on omics",
+    "fusion": "FC(288->128->64->1)"
+  },
+  "n_params": 338081,
+  "hyperparams": {
+    "batch_size": 512,
+    "max_epochs": 150,
+    "lr": 0.0003,
+    "weight_decay": 0.0001,
+    "patience": 15,
+    "warmup_epochs": 5,
+    "pearson_weight": 0.3
+  },
+  "training": {
+    "n_train_rows": 272015,
+    "n_val_rows": 67915,
+    "n_train_genes": 14285,
+    "n_val_genes": 3572
+  },
+  "best_val_r": 0.6970909453280877
+}

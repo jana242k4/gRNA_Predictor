@@ -138,15 +138,15 @@ export default function GeneExplorer() {
       )}
 
       {/* Results */}
-      {results && Array.isArray(results) && results.length > 0 && (
+      {results && results.top_guides && results.top_guides.length > 0 && (
         <div className="bg-surface-container-low rounded-3xl overflow-hidden">
           <div className="px-5 py-3 border-b border-outline-variant flex items-center gap-3">
-            <span className="text-sm font-semibold text-on-surface">{gene}</span>
+            <span className="text-sm font-semibold text-on-surface">{results.gene ?? gene}</span>
             <span className="text-xs text-on-surface-variant">
-              Top {results.length} guides · {cellType.replace(/_/g, ' ')}
+              Top {results.top_guides.length} guides · {cellType.replace(/_/g, ' ')}
             </span>
             <button
-              onClick={() => exportCSV(results, gene, cellType)}
+              onClick={() => exportCSV(results.top_guides, gene, cellType)}
               className="ml-auto flex items-center gap-1.5 px-3 py-1.5 rounded-full text-xs font-medium
                          border border-outline-variant text-on-surface-variant
                          hover:bg-surface-container-high transition-colors"
@@ -168,7 +168,7 @@ export default function GeneExplorer() {
             <span>Strand</span>
           </div>
 
-          {results.map((r, i) => (
+          {results.top_guides.map((r, i) => (
             <div
               key={r.guide_id ?? i}
               className="grid grid-cols-[1fr_4.5rem_6rem_4rem_4rem_3rem] gap-x-3
@@ -198,7 +198,7 @@ export default function GeneExplorer() {
       )}
 
       {/* No results but request succeeded */}
-      {results && Array.isArray(results) && results.length === 0 && (
+      {results && results.top_guides && results.top_guides.length === 0 && (
         <div className="bg-surface-container-low rounded-3xl p-6 text-center text-sm text-on-surface-variant">
           No guides found for {gene} in {cellType.replace(/_/g, ' ')}.
         </div>

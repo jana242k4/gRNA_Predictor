@@ -1,0 +1,25 @@
+{
+  "n_guides": 67986,
+  "n_cell_types": 5,
+  "n_cell_feature_rows": 339930,
+  "seq_feature_dim": 450,
+  "atac_cell_types": [
+    "T_cell_CD4",
+    "T_cell_CD8",
+    "NK_cell",
+    "B_cell",
+    "K562"
+  ],
+  "rna_cell_types": [
+    "T_cell_CD4",
+    "T_cell_CD8",
+    "B_cell",
+    "K562"
+  ],
+  "has_gene_effect_labels": true,
+  "atac_coverage_pct": 22.46,
+  "rna_coverage_pct": 65.51,
+  "splice_coverage_pct": 99.78,
+  "gene_effect_coverage_pct": 79.99,
+  "total_time_min": 2.56
+}

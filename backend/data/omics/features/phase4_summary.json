@@ -1,0 +1,24 @@
+{
+  "splice_risk": {
+    "n_guides": 67986,
+    "mean_risk": 0.1617,
+    "median_risk": 0.0012,
+    "high_risk_n": 5221,
+    "moderate_risk_n": 5169,
+    "low_risk_n": 57596
+  },
+  "cell_suitability": {
+    "n_rows": 339930,
+    "mean_suit": 0.5,
+    "p10_suit": 0.3059,
+    "p90_suit": 0.6936,
+    "weights": {
+      "efficacy": 0.3,
+      "rna_expression": 0.25,
+      "atac_access": 0.2,
+      "splice_safety": 0.15,
+      "gene_essent": 0.1
+    }
+  },
+  "elapsed_s": 48.2
+}

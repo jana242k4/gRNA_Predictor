@@ -44,8 +44,8 @@ export default function App() {
           <div className="flex items-center gap-3">
             <span className="material-symbols-outlined text-primary text-3xl select-none">biotech</span>
             <div>
-              <h1 className="text-base font-semibold text-on-surface leading-tight">gRNA Predictor</h1>
-              <p className="text-xs text-on-surface-variant leading-tight">OmicsCRISPR — Cell-type-aware guide scoring</p>
+              <h1 className="text-base font-semibold text-on-surface leading-tight">OmicsCRISPR</h1>
+              <p className="text-xs text-on-surface-variant leading-tight">Cell-type-aware CRISPR guide design</p>
             </div>
           </div>
 
@@ -102,7 +102,7 @@ export default function App() {
 
       {/* Footer */}
       <footer className="border-t border-outline-variant mt-12 py-6 text-center text-xs text-on-surface-variant">
-        gRNA Predictor · OmicsCRISPR · Trained on Doench 2016 + 2014 · Kim2019 r=0.640
+        OmicsCRISPR · Trained on Doench 2016 + 2014 + Kim2019 · Independent r=0.757
       </footer>
     </div>
   )

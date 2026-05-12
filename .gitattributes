@@ -1,0 +1,3 @@
+backend/data/omics/features/cell_features.csv filter=lfs diff=lfs merge=lfs -text
+backend/data/omics/features/cell_suitability.csv filter=lfs diff=lfs merge=lfs -text
+backend/data/omics/depmap/Achilles_gene_effect.csv filter=lfs diff=lfs merge=lfs -text
