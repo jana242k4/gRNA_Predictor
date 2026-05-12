@@ -44,6 +44,10 @@ RANDOM_SEED       = 42
 N_SYNTHETIC       = 15_000
 DATA_CSV          = Path(__file__).parent / "data" / "combined_training_data.csv"
 MODEL_OUT         = Path(__file__).parent / "app" / "models" / "xgb_model.pkl"
+MODEL_JSON_OUT    = Path(__file__).parent.parent / "frontend" / "public" / "xgb_trees.json"
+
+# All sources to include; Kim2019 is normalized separately (score scale differs)
+TRAIN_SOURCES = {"Doench2016", "Doench2014", "Kim2019"}
 
 # ---------------------------------------------------------------------------
 # SantaLucia 1998 nearest-neighbor parameters (inline — no app import needed)
@@ -142,29 +146,69 @@ def _synthetic_label(seq: str) -> float:
 # Data loading
 # ---------------------------------------------------------------------------
 
+def _zscore_normalize_by_source(
+    scores: list, src_labels: list
+) -> list[float]:
+    """
+    Z-score normalize scores within each source, then min-max scale to [0,1].
+
+    This handles the scale mismatch between Doench (0-1 fraction) and Kim2019
+    (log2 fold-change or similar) by making all sources rank-compatible before
+    merging. Z-score captures the within-source relative ranking which is
+    biologically consistent across datasets.
+    """
+    from collections import defaultdict
+    source_indices: dict = defaultdict(list)
+    for i, src in enumerate(src_labels):
+        source_indices[src].append(i)
+
+    normalized = list(scores)
+    for src, indices in source_indices.items():
+        vals = np.array([scores[i] for i in indices], dtype=np.float64)
+        mean, std = vals.mean(), vals.std()
+        if std < 1e-8:
+            continue
+        z = (vals - mean) / std
+        z_min, z_max = z.min(), z.max()
+        scaled = (z - z_min) / (z_max - z_min) if z_max > z_min else np.full_like(z, 0.5)
+        for j, idx in enumerate(indices):
+            normalized[idx] = float(np.clip(scaled[j], 0.0, 1.0))
+    return normalized
+
+
 def load_real_data(
     path: Path,
     sources: set | None = None,
 ) -> tuple[list[str], list[float], list[str]]:
     """Load combined_training_data.csv — returns (sequences, scores, thirty_mers).
 
-    Args:
-        sources: if given, only load rows whose 'source' column is in this set.
-                 Defaults to human-cell sources (Doench2016, Doench2014, DeepHF2019).
+    When multiple sources are included (e.g. Kim2019 alongside Doench), scores
+    are z-score normalized per source before merging to handle scale differences.
     """
     if sources is None:
-        sources = {"Doench2016", "Doench2014"}
-    sequences, scores, thirty_mers = [], [], []
+        sources = TRAIN_SOURCES
+    sequences, raw_scores, thirty_mers, src_labels = [], [], [], []
     with open(path, newline="", encoding="utf-8") as f:
         for row in csv.DictReader(f):
-            if row.get("source", "Doench2016") not in sources:
+            src = row.get("source", "Doench2016")
+            if src not in sources:
                 continue
             seq   = row["sequence"].strip().upper()
             score = float(row["score"])
-            if len(seq) == 20 and set(seq) <= set("ACGT") and 0.0 <= score <= 1.0:
+            if len(seq) == 20 and set(seq) <= set("ACGT"):
                 sequences.append(seq)
-                scores.append(score)
+                raw_scores.append(score)
                 thirty_mers.append(row.get("thirty_mer", "").strip())
+                src_labels.append(src)
+
+    # Normalize across sources if more than one source present
+    unique_sources = set(src_labels)
+    if len(unique_sources) > 1:
+        scores = _zscore_normalize_by_source(raw_scores, src_labels)
+        print(f"  Applied per-source z-score normalization across {unique_sources}")
+    else:
+        scores = [float(np.clip(s, 0.0, 1.0)) for s in raw_scores]
+
     return sequences, scores, thirty_mers
 
 
@@ -209,7 +253,7 @@ def train():
         thirty_mers = [""] * len(sequences)
         data_source = "synthetic"
 
-    print(f"\nExtracting 450-dim feature vectors (guide + 30-mer context + segmented Tm + GC-clamp + hairpin + microhomology)...")
+    print(f"\nExtracting 452-dim feature vectors (guide + context + segmented Tm + GC-clamp + hairpin + microhomology + strand-GC)...")
     X = extract_features_batch(sequences, thirty_mers)
     y = np.array(scores, dtype=np.float32)
 
@@ -276,7 +320,67 @@ def train():
     with open(MODEL_OUT, "wb") as f:
         pickle.dump(model, f)
     print(f"Model saved: {MODEL_OUT}")
+
+    # Export to JSON for the frontend offline predictor
+    if _USE_XGB:
+        _export_xgb_json(model)
+
     return model
+
+
+def _export_xgb_json(model) -> None:
+    """
+    Export XGBoost model to the flat-array JSON format used by xgbPredictor.js.
+    Format: { numTrees, treeOffsets, features, thresholds, left, right }
+    Uses DFS node ordering (same as XGBoost dump_model 'raw' format).
+    """
+    import json as _json
+
+    booster = model.get_booster()
+    raw_dump = booster.get_dump(dump_format="json")
+
+    all_features, all_thresholds, all_left, all_right, offsets = [], [], [], [], []
+
+    def _traverse(node: dict, feat_list, thresh_list, left_list, right_list):
+        idx = len(feat_list)
+        if "leaf" in node:
+            feat_list.append(-1)
+            thresh_list.append(float(node["leaf"]))
+            left_list.append(-1)
+            right_list.append(-1)
+        else:
+            feat_list.append(int(node["split"].replace("f", "")))
+            thresh_list.append(float(node["split_condition"]))
+            left_list.append(-1)   # placeholder
+            right_list.append(-1)  # placeholder
+            l_idx = len(feat_list)
+            _traverse(node["children"][0], feat_list, thresh_list, left_list, right_list)
+            r_idx = len(feat_list)
+            _traverse(node["children"][1], feat_list, thresh_list, left_list, right_list)
+            left_list[idx]  = l_idx
+            right_list[idx] = r_idx
+
+    import json as _json2
+    for tree_str in raw_dump:
+        tree = _json2.loads(tree_str)
+        offsets.append(len(all_features))
+        _traverse(tree, all_features, all_thresholds, all_left, all_right)
+
+    payload = {
+        "numTrees":    len(offsets),
+        "treeOffsets": offsets,
+        "features":    all_features,
+        "thresholds":  all_thresholds,
+        "left":        all_left,
+        "right":       all_right,
+    }
+
+    MODEL_JSON_OUT.parent.mkdir(parents=True, exist_ok=True)
+    with open(MODEL_JSON_OUT, "w", encoding="utf-8") as f:
+        _json.dump(payload, f, separators=(",", ":"))
+
+    size_kb = MODEL_JSON_OUT.stat().st_size >> 10
+    print(f"Frontend JSON model saved: {MODEL_JSON_OUT} ({size_kb} KB)")
 
 
 def cross_validate_model(n_splits: int = 5) -> dict:

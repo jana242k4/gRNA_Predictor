@@ -1,5 +1,5 @@
 /**
- * 450-dim feature engineering for gRNA efficiency prediction.
+ * 452-dim feature engineering for gRNA efficiency prediction.
  * JavaScript port of backend/app/services/feature_engineering.py
  *
  * Feature vector layout:
@@ -18,6 +18,8 @@
  *   [447]     Tm PAM-distal (guide[0:8])
  *   [448]     Tm PAM-proximal 8 bp (guide[12:20])
  *   [449]     Tm full 30-mer context
+ *   [450]     PAM-proximal 10bp GC (positions 11–20)
+ *   [451]     PAM-distal 10bp GC (positions 1–10)
  */
 
 // SantaLucia 1998 DNA-DNA nearest-neighbor parameters
@@ -200,15 +202,19 @@ export function extractFeatures(sequence, thirtyMer = '') {
     ? new Float32Array([tmNorm(thirtyMer.toUpperCase())])
     : new Float32Array(1)                                            // 1
 
-  // Concatenate all into a single Float32Array of length 450
+  // Strand-specific GC split (dims 450-451)
+  const proxGC  = new Float32Array([gcContent(seq.slice(10, 20))])  // PAM-proximal 10bp
+  const distalGC = new Float32Array([gcContent(seq.slice(0, 10))])  // PAM-distal 10bp
+
+  // Concatenate all into a single Float32Array of length 452
   const parts = [onehot, gc, tm, dinuc, seedGC, polyT, posDinuc,
                  upstream, downstream, gcClampV, hairpin, mhScore,
-                 tmDistal, tmProximal, tmCtx]
+                 tmDistal, tmProximal, tmCtx, proxGC, distalGC]
   const total = parts.reduce((s, p) => s + p.length, 0)
   const result = new Float32Array(total)
   let offset = 0
   for (const p of parts) { result.set(p, offset); offset += p.length }
-  return result  // length 450
+  return result  // length 452
 }
 
 /**
@@ -220,9 +226,9 @@ export function extractFeatures(sequence, thirtyMer = '') {
 export function extractFeaturesBatch(sequences, thirtyMers = null) {
   const tms = thirtyMers || sequences.map(() => '')
   const N   = sequences.length
-  const result = new Float32Array(N * 450)
+  const result = new Float32Array(N * 452)
   for (let i = 0; i < N; i++) {
-    result.set(extractFeatures(sequences[i], tms[i]), i * 450)
+    result.set(extractFeatures(sequences[i], tms[i]), i * 452)
   }
   return result
 }

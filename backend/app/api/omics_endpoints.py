@@ -11,9 +11,10 @@ All endpoints gracefully return 503 when the omics data/model is not available
 (e.g. on Render free tier without torch), so the main /predict endpoint is
 never affected.
 """
-from fastapi import APIRouter, HTTPException, Query
+from fastapi import APIRouter, HTTPException, Query, Request
 from pydantic import BaseModel, Field
 from typing import Optional
+from app.core.limiter import limiter
 
 router = APIRouter(prefix="/omics", tags=["omics"])
 
@@ -57,7 +58,8 @@ def _check_cell_types(cell_types: Optional[list[str]]) -> list[str]:
 # ── Endpoints ─────────────────────────────────────────────────────────────────
 
 @router.post("/predict")
-def omics_predict(req: OmicsPredictRequest):
+@limiter.limit("20/minute")
+def omics_predict(request: Request, req: OmicsPredictRequest):
     """
     Multi-omics prediction for a 20-mer guide sequence.
 
@@ -83,7 +85,8 @@ def omics_predict(req: OmicsPredictRequest):
 
 
 @router.post("/explain")
-def omics_explain(req: OmicsExplainRequest):
+@limiter.limit("10/minute")
+def omics_explain(request: Request, req: OmicsExplainRequest):
     """
     Integrated Gradients attribution for the 450-dim biochemical feature branch.
 

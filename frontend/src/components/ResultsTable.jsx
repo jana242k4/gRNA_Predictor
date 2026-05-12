@@ -1,6 +1,28 @@
 import React, { useState } from 'react'
 import OmicsPanel from './OmicsPanel'
 
+function exportCSV(guides, filename = 'grna_results.csv') {
+  const headers = ['Rank','Sequence','PAM','Efficiency%','GC%','Specificity%','Cut site','Distance (bp)','Score','Strand']
+  const rows = guides.map((g, i) => [
+    i + 1,
+    g.sequence,
+    g.pam_sequence ?? g.pam ?? '',
+    ((g.efficiency_score ?? g.score ?? 0) * 100).toFixed(1),
+    (g.gc_content ?? 50).toFixed(1),
+    ((g.specificity_score ?? 1) * 100).toFixed(1),
+    g.cut_site ?? '',
+    g.distance_to_target ?? '',
+    (g.combined_score ?? g.efficiency_score ?? 0).toFixed(4),
+    g.strand ?? '+',
+  ])
+  const csv = [headers, ...rows].map(r => r.join(',')).join('\n')
+  const blob = new Blob([csv], { type: 'text/csv' })
+  const url  = URL.createObjectURL(blob)
+  const a    = document.createElement('a')
+  a.href = url; a.download = filename; a.click()
+  URL.revokeObjectURL(url)
+}
+
 function scoreColor(score) {
   if (score >= 0.65) return 'badge-high'
   if (score >= 0.40) return 'badge-medium'
@@ -71,6 +93,15 @@ export default function ResultsTable({ data, inputSeq }) {
         {modelInfo.pearson_r && (
           <span className="text-xs text-on-surface-variant">Pearson r={modelInfo.pearson_r}</span>
         )}
+        <button
+          onClick={() => exportCSV(guides)}
+          className="ml-auto flex items-center gap-1.5 px-3 py-1.5 rounded-full text-xs font-medium
+                     border border-outline-variant text-on-surface-variant
+                     hover:bg-surface-container-high transition-colors"
+        >
+          <span className="material-symbols-outlined text-sm">download</span>
+          Export CSV
+        </button>
       </div>
 
       {/* Table */}

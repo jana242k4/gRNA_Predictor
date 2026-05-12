@@ -38,7 +38,7 @@ export async function xgbPredict(featuresFlat, modelBase = '/') {
   const model = await loadModel(modelBase)
   const { numTrees, treeOffsets, features, thresholds, left, right } = model
 
-  const DIM = 450
+  const DIM = 452
   const N   = Math.round(featuresFlat.length / DIM)
   const out = new Float32Array(N)
 

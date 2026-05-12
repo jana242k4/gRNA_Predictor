@@ -140,7 +140,7 @@ def test_both_strands_detected():
 # ── Feature Engineering ──────────────────────────────────────────────────────
 def test_feature_vector_shape():
     feat = extract_features("ATCGATCGATCGATCGATCG")
-    assert feat.shape == (450,)   # 447 + 3 segmented Tm (PAM-distal, seed, full-30mer)
+    assert feat.shape == (452,)   # 450 + PAM-proximal 10bp GC + PAM-distal 10bp GC
 
 
 def test_feature_vector_onehot_valid():

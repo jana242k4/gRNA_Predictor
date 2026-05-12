@@ -8,5 +8,6 @@ xgboost
 numpy
 scipy
 httpx
+slowapi
 pytest
 pytest-asyncio

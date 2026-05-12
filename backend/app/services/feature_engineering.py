@@ -1,7 +1,7 @@
 """
 Feature engineering for ML-based gRNA efficiency prediction.
 
-Feature vector (450 dimensions total):
+Feature vector (452 dimensions total):
   [0:80]    Positional one-hot — 20 positions × 4 bases (guide sequence)
   [80]      GC content fraction (guide)
   [81]      Nearest-neighbor Tm (SantaLucia 1998, full guide), normalised 0-1
@@ -17,6 +17,8 @@ Feature vector (450 dimensions total):
   [447]     Tm of PAM-distal half (guide positions 0:8), normalised 0-1
   [448]     Tm of seed region (guide positions 12:20), normalised 0-1
   [449]     Tm of full 30-mer context, normalised 0-1 (0 if 30-mer unavailable)
+  [450]     PAM-proximal 10bp GC (positions 11–20, non-template strand)
+  [451]     PAM-distal 10bp GC (positions 1–10, non-template strand)
 
 When a 30-mer is not available (Doench 2014 guides), dims [404:420], [420:444],
 [446], and [449] are zero-padded.
@@ -41,7 +43,7 @@ from app.utils.biology_utils import nearest_neighbor_tm, seed_region_gc, has_pol
 BASES     = ["A", "C", "G", "T"]
 DINUCS    = [a + b for a in BASES for b in BASES]   # 16 dinucleotides
 GUIDE_LEN = 20
-N_FEATURES = 450   # 80 + 1 + 1 + 16 + 1 + 1 + 304 + 16 + 24 + 1 + 1 + 1 + 1 + 1 + 1
+N_FEATURES = 452   # 80+1+1+16+1+1+304+16+24+1+1+1+1+1+1+1+1 (added proximal/distal GC split)
 
 _COMPLEMENT = {"A": "T", "T": "A", "G": "C", "C": "G", "N": "N"}
 
@@ -121,6 +123,20 @@ def _tm_segment(segment: str) -> float:
         return 0.0
     tm = nearest_neighbor_tm(segment)
     return float(np.clip((tm - _TM_MIN) / (_TM_MAX - _TM_MIN), 0.0, 1.0))
+
+
+def _proximal_gc(sequence: str) -> float:
+    """GC fraction in PAM-proximal 10 bp (positions 11–20, non-template strand).
+    Captures R-loop stability near the PAM where Cas9 initiates strand invasion."""
+    seg = sequence.upper()[10:20]
+    return (seg.count("G") + seg.count("C")) / max(len(seg), 1)
+
+
+def _distal_gc(sequence: str) -> float:
+    """GC fraction in PAM-distal 10 bp (positions 1–10, non-template strand).
+    Elevated distal GC can increase off-target hybridisation at secondary sites."""
+    seg = sequence.upper()[:10]
+    return (seg.count("G") + seg.count("C")) / max(len(seg), 1)
 
 
 def _gc_clamp(sequence: str) -> float:
@@ -237,11 +253,15 @@ def extract_features(sequence: str,
     else:
         tm_ctx = np.zeros(1, dtype=np.float32)                                  # 1
 
+    prox_gc  = np.array([_proximal_gc(seq)], dtype=np.float32)   # 1
+    distal_gc = np.array([_distal_gc(seq)], dtype=np.float32)   # 1
+
     return np.concatenate(
         [onehot, gc, tm, dinuc, seed_gc, poly_t, pos_dinuc,
          upstream, downstream, gc_clamp, hairpin, mh_score,
-         tm_pam_distal, tm_pam_proximal_8bp, tm_ctx]
-    )   # 450
+         tm_pam_distal, tm_pam_proximal_8bp, tm_ctx,
+         prox_gc, distal_gc]
+    )   # 452
 
 
 def extract_features_batch(sequences: List[str],

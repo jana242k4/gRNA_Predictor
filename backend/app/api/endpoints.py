@@ -32,13 +32,14 @@ Scoring formula (multi-objective):
 Ranking is always by combined_score (incorporates off-target risk in all modes).
 """
 import math
-from fastapi import APIRouter, HTTPException
+from fastapi import APIRouter, HTTPException, Request
 from app.models.schemas import PredictRequest, PredictResponse, GRNAResult
-from app.services.sequence_parser import find_all_grnas
+from app.services.sequence_parser import find_all_grnas, clean_sequence
 from app.models.ai_models import predict_efficiency, get_model_info
 from app.services.off_target import specificity_score
 from app.core.config import settings
 from app.core.exceptions import SequenceTooLongError
+from app.core.limiter import limiter
 
 router = APIRouter()
 
@@ -73,20 +74,23 @@ def _proximity_score(distance: int, sigma: float = _PROXIMITY_SIGMA) -> float:
 
 
 @router.post("/predict", response_model=PredictResponse)
-def predict_grnas(request: PredictRequest):
+@limiter.limit("30/minute")
+def predict_grnas(request: Request, req: PredictRequest):
     """
     Return the top N predicted guide RNAs, optionally ranked by combined
     efficiency + proximity score when a target_position is provided.
     """
-    if len(request.sequence) > settings.MAX_SEQUENCE_LENGTH:
+    sequence = clean_sequence(req.sequence)
+
+    if len(sequence) > settings.MAX_SEQUENCE_LENGTH:
         raise SequenceTooLongError(settings.MAX_SEQUENCE_LENGTH)
 
-    candidates = find_all_grnas(request.sequence, pam=request.pam)
+    candidates = find_all_grnas(sequence, pam=req.pam)
 
     if not candidates:
         raise HTTPException(
             status_code=404,
-            detail=f"No valid PAM ({request.pam}) sites found in the provided sequence.",
+            detail=f"No valid PAM ({req.pam}) sites found in the provided sequence.",
         )
 
     # Pre-filter by GC content before ML inference to keep response fast
@@ -96,16 +100,16 @@ def predict_grnas(request: PredictRequest):
         candidates = gc_filtered[:MAX_CANDIDATES] if gc_filtered else candidates[:MAX_CANDIDATES]
 
     # --- Efficiency scoring (ML or heuristic) ---
-    scored = predict_efficiency(candidates, full_sequence=request.sequence)
+    scored = predict_efficiency(candidates, full_sequence=sequence)
 
     # --- Cut site, proximity, and off-target specificity ---
-    target = request.target_position   # 1-indexed or None
-    w      = request.proximity_weight
+    target = req.target_position   # 1-indexed or None
+    w      = req.proximity_weight
 
     for c in scored:
-        cs            = _cut_site(c, request.pam)
+        cs            = _cut_site(c, req.pam)
         c["cut_site"] = cs
-        spec = specificity_score(c["sequence"])
+        spec = specificity_score(c["sequence"], pam=req.pam)
         c["off_target_score"] = round(spec, 3)
 
         # Efficiency adjusted by off-target specificity (multiplicative penalty)
@@ -123,7 +127,7 @@ def predict_grnas(request: PredictRequest):
             c["combined_score"]     = round(eff_adj, 4)
 
     # Always rank by combined_score (incorporates off-target risk in all modes)
-    ranked = sorted(scored, key=lambda x: x["combined_score"], reverse=True)[: request.top_n]
+    ranked = sorted(scored, key=lambda x: x["combined_score"], reverse=True)[: req.top_n]
 
     results = [
         GRNAResult(
@@ -146,8 +150,8 @@ def predict_grnas(request: PredictRequest):
     return PredictResponse(
         total_candidates=len(candidates),
         top_grnas=results,
-        sequence_length=len(request.sequence),
-        pam_used=request.pam,
+        sequence_length=len(sequence),
+        pam_used=req.pam,
         model_info=get_model_info(),
         target_position=target,
         proximity_weight=w if target is not None else None,

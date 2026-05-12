@@ -3,6 +3,24 @@ import { omicsGene } from '../services/api'
 
 const CELL_TYPES = ['K562', 'T_cell_CD4', 'T_cell_CD8', 'NK_cell', 'B_cell']
 
+function exportCSV(rows, gene, cellType) {
+  const headers = ['Guide sequence','Efficacy','Suitability%','Splice risk%','Chr','Strand']
+  const data = rows.map(r => [
+    r.guide_id,
+    r.efficacy != null ? r.efficacy.toFixed(3) : '',
+    r.suitability_score != null ? (r.suitability_score * 100).toFixed(1) : '',
+    r.splice_risk != null ? (r.splice_risk * 100).toFixed(1) : '',
+    r.chr ?? '',
+    r.strand ?? '',
+  ])
+  const csv = [headers, ...data].map(r => r.join(',')).join('\n')
+  const blob = new Blob([csv], { type: 'text/csv' })
+  const url  = URL.createObjectURL(blob)
+  const a    = document.createElement('a')
+  a.href = url; a.download = `${gene}_${cellType}_guides.csv`; a.click()
+  URL.revokeObjectURL(url)
+}
+
 function SuitBar({ value }) {
   const pct = Math.round((value ?? 0) * 100)
   return (
@@ -127,6 +145,15 @@ export default function GeneExplorer() {
             <span className="text-xs text-on-surface-variant">
               Top {results.length} guides · {cellType.replace(/_/g, ' ')}
             </span>
+            <button
+              onClick={() => exportCSV(results, gene, cellType)}
+              className="ml-auto flex items-center gap-1.5 px-3 py-1.5 rounded-full text-xs font-medium
+                         border border-outline-variant text-on-surface-variant
+                         hover:bg-surface-container-high transition-colors"
+            >
+              <span className="material-symbols-outlined text-sm">download</span>
+              Export CSV
+            </button>
           </div>
 
           {/* Table header */}

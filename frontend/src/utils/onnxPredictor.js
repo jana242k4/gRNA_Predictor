@@ -17,7 +17,7 @@ import { xgbPredict }            from './xgbPredictor.js'
 const SIGMA          = 50.0
 const CAS12A_PAMS    = new Set(['TTTV'])
 const MAX_CANDIDATES = 200
-const MODEL_INFO     = 'XGBoost 450-dim (in-browser JS) — Doench 2016 + 2014, n=4,692'
+const MODEL_INFO     = 'XGBoost 452-dim (in-browser JS) — Doench 2016 + 2014 + Kim2019, n=11,991'
 
 // ---------------------------------------------------------------------------
 // Off-target specificity heuristic (used in all modes)

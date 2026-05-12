@@ -8,7 +8,47 @@ Supports:
 """
 import re
 from typing import List, Tuple
+from fastapi import HTTPException
 from app.utils.biology_utils import reverse_complement, gc_content
+
+MIN_SEQUENCE_LENGTH = 23  # shortest valid guide (20) + minimal PAM (3)
+_VALID_DNA = re.compile(r'^[ACGT]+$')
+_RNA_CHARS  = re.compile(r'[U]', re.IGNORECASE)
+_AMBIGUOUS  = re.compile(r'[RYSWKMBDHVN]', re.IGNORECASE)
+
+
+def clean_sequence(raw: str) -> str:
+    """
+    Strip FASTA headers and whitespace, return uppercase DNA string.
+    Raises HTTPException with a human-readable message on validation failure.
+    """
+    lines = raw.strip().splitlines()
+    seq_lines = [ln.strip() for ln in lines if not ln.startswith('>')]
+    seq = ''.join(seq_lines).upper().replace(' ', '').replace('\t', '')
+
+    if not seq:
+        raise HTTPException(status_code=400, detail="Sequence is empty after stripping FASTA headers.")
+
+    if _RNA_CHARS.search(seq):
+        raise HTTPException(
+            status_code=400,
+            detail="RNA sequence detected (contains 'U'). Please convert U→T and resubmit a DNA sequence.",
+        )
+
+    bad = set(re.findall(r'[^ACGTU]', seq, re.IGNORECASE))
+    if bad:
+        raise HTTPException(
+            status_code=400,
+            detail=f"Invalid characters in sequence: {', '.join(sorted(bad))}. Only A, C, G, T are accepted.",
+        )
+
+    if len(seq) < MIN_SEQUENCE_LENGTH:
+        raise HTTPException(
+            status_code=400,
+            detail=f"Sequence too short ({len(seq)} bp). Minimum length is {MIN_SEQUENCE_LENGTH} bp (guide + PAM).",
+        )
+
+    return seq
 
 GUIDE_LENGTH = 20
 
