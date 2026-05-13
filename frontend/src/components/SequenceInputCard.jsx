@@ -11,7 +11,7 @@ const CELL_TYPES = ['K562', 'T_cell_CD4', 'T_cell_CD8', 'NK_cell', 'B_cell']
 
 const EXAMPLE = 'ATGGAGGAGCCGCAGTCAGATCCTAGCGGTAATCTACTGGGACGGAACAGCTTTGAGGTGCGTGTTTGTGCCTGTCCTGGGAGAGACCGGCGCACAGAGGAAGAGAATCTCCGCAAGAAAGGGGAGCCTCACCACGAGCTGCCCCCAGGGAGCACTAAGCGAGCACTGCCCAACAACACCAGCTCCTCTCCCCAGCCAAAGAAGAAACCACTGGATGGAGAATATTTCACCCTTCAGATCCGTGGGCGTGAGCGCTTCGAGATGTTCCGAGAGCTGAATGAGGCC'
 
-export default function SequenceInputCard({ onPredict, loading, error }) {
+export default function SequenceInputCard({ onPredict, loading, error, onRetry }) {
   const [sequence, setSequence]           = useState('')
   const [pam, setPam]                     = useState('NGG')
   const [targetPos, setTargetPos]         = useState('')
@@ -187,7 +187,20 @@ export default function SequenceInputCard({ onPredict, loading, error }) {
       {error && (
         <div className="bg-error-container rounded-xl px-4 py-3 flex items-start gap-2">
           <span className="material-symbols-outlined text-on-error-container text-base mt-0.5">error</span>
-          <p className="text-sm text-on-error-container">{error}</p>
+          <p className="text-sm text-on-error-container flex-1">{error}</p>
+          {onRetry && (
+            <button
+              type="button"
+              onClick={onRetry}
+              disabled={loading}
+              className="flex items-center gap-1 px-3 py-1 rounded-full text-xs font-medium
+                         bg-on-error-container/10 text-on-error-container border border-on-error-container/30
+                         hover:bg-on-error-container/20 disabled:opacity-40 transition-colors whitespace-nowrap"
+            >
+              <span className="material-symbols-outlined text-sm">refresh</span>
+              Retry
+            </button>
+          )}
         </div>
       )}
 

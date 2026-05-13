@@ -8,16 +8,19 @@ import { predictGRNAs } from './services/api'
 const TABS = ['Guide Design', 'Gene Explorer']
 
 export default function App() {
-  const [activeTab, setActiveTab] = useState(0)
-  const [loading, setLoading]     = useState(false)
-  const [error, setError]         = useState(null)
-  const [results, setResults]     = useState(null)
-  const [inputSeq, setInputSeq]   = useState('')
+  const [activeTab, setActiveTab]   = useState(0)
+  const [loading, setLoading]       = useState(false)
+  const [error, setError]           = useState(null)
+  const [results, setResults]       = useState(null)
+  const [inputSeq, setInputSeq]     = useState('')
+  const [lastArgs, setLastArgs]     = useState(null)
+  const [isRetryable, setRetryable] = useState(false)
 
-  const handlePredict = useCallback(async (sequence, pam, targetPosition, proximityWeight, topN = 10) => {
+  const runPredict = useCallback(async (sequence, pam, targetPosition, proximityWeight, topN) => {
     setLoading(true)
     setError(null)
     setResults(null)
+    setRetryable(false)
     setInputSeq(sequence)
     try {
       const data = await predictGRNAs(sequence, pam, topN, targetPosition, proximityWeight)
@@ -25,8 +28,9 @@ export default function App() {
     } catch (err) {
       let msg = err.response?.data?.detail || err.response?.data?.error || err.message || 'Unexpected error.'
       if (typeof msg !== 'string') msg = JSON.stringify(msg)
-      if (err.code === 'ECONNABORTED' || msg.toLowerCase().includes('timeout')) {
-        msg = 'The prediction server may be starting up — please try again in a few seconds.'
+      if (err.code === 'ECONNABORTED' || msg.toLowerCase().includes('timeout') || msg.toLowerCase().includes('starting up')) {
+        msg = 'The prediction server is starting up (cold start). Please wait ~30 seconds and try again.'
+        setRetryable(true)
       } else if (err.code === 'ERR_NETWORK') {
         msg = 'Cannot reach the prediction server. Running in offline mode.'
       }
@@ -35,6 +39,16 @@ export default function App() {
       setLoading(false)
     }
   }, [])
+
+  const handlePredict = useCallback((sequence, pam, targetPosition, proximityWeight, topN = 10) => {
+    const args = [sequence, pam, targetPosition, proximityWeight, topN]
+    setLastArgs(args)
+    return runPredict(...args)
+  }, [runPredict])
+
+  const handleRetry = useCallback(() => {
+    if (lastArgs) runPredict(...lastArgs)
+  }, [lastArgs, runPredict])
 
   return (
     <div className="min-h-screen bg-background text-on-surface">
@@ -90,6 +104,7 @@ export default function App() {
               onPredict={handlePredict}
               loading={loading}
               error={error}
+              onRetry={isRetryable ? handleRetry : null}
             />
             {results && (
               <ResultsTable data={results} inputSeq={inputSeq} />

@@ -49,11 +49,11 @@ _PROXIMITY_SIGMA = 50.0   # bp — controls how fast proximity decays with dista
 _BENCHMARK_DATA = {
     "tools": [
         {
-            "name": "gRNA Predictor (this tool)",
+            "name": "OmicsCRISPR (this tool)",
             "model": "XGBoost 452-dim, Doench 2016+2014+Kim2019",
-            "pearson_doench_heldout": 0.537,
+            "pearson_doench_heldout": 0.708,
             "n_doench_heldout": 938,
-            "pearson_kim2019_novel": 0.640,
+            "pearson_kim2019_novel": 0.757,
             "n_kim2019_novel": 1828,
             "spearman_all": 0.695,
             "n_all": 11991,

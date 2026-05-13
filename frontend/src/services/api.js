@@ -96,11 +96,7 @@ export async function checkHealth() {
 let _benchmarkCache = null
 export async function fetchBenchmark() {
   if (_benchmarkCache) return _benchmarkCache
-  try {
-    const res = await apiClient.get('/benchmark')
-    _benchmarkCache = res.data
-    return res.data
-  } catch {
-    return null
-  }
+  const res = await apiClient.get('/benchmark')
+  _benchmarkCache = res.data
+  return res.data
 }
