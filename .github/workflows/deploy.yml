@@ -51,29 +51,3 @@ jobs:
       - id: deployment
         uses: actions/deploy-pages@v4
 
-  deploy-backend:
-    needs: build
-    runs-on: ubuntu-latest
-    # Only runs when ORACLE_VM_IP secret is set — skip silently if not configured yet
-    if: ${{ secrets.ORACLE_VM_IP != '' }}
-    steps:
-      - uses: actions/checkout@v4
-
-      - name: Deploy backend to Oracle Cloud VM
-        uses: appleboy/ssh-action@v1.0.3
-        with:
-          host: ${{ secrets.ORACLE_VM_IP }}
-          username: ubuntu
-          key: ${{ secrets.ORACLE_SSH_KEY }}
-          script: |
-            set -e
-            cd ~/gRNA_Predictor
-            git pull origin main
-            docker compose build backend
-            docker compose up -d --no-deps backend
-            echo "Waiting for backend to be healthy..."
-            for i in $(seq 1 12); do
-              curl -sf http://localhost:8000/health && echo "Backend healthy." && exit 0
-              sleep 5
-            done
-            echo "Backend health check failed after 60s" && exit 1
