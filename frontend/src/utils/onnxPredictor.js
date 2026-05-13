@@ -16,7 +16,7 @@ import { xgbPredict }            from './xgbPredictor.js'
 
 const SIGMA          = 50.0
 const CAS12A_PAMS    = new Set(['TTTV'])
-const MAX_CANDIDATES = 200
+const MAX_CANDIDATES = 50   // keep heap small — 572 KB model JSON expands to ~8 MB in V8
 const MODEL_INFO     = 'XGBoost 452-dim (in-browser JS) — Doench 2016 + 2014 + Kim2019, n=11,991'
 
 // ---------------------------------------------------------------------------

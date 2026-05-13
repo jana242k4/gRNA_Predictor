@@ -20,9 +20,10 @@ export default function SequenceInputCard({ onPredict, loading, error }) {
   const [selectedCells, setSelectedCells] = useState([])
   const textareaRef = useRef(null)
 
-  const seqClean = sequence.toUpperCase().replace(/\s+/g, '')
-  const seqLen   = seqClean.length
-  const valid    = seqLen >= 23
+  const seqClean   = sequence.toUpperCase().replace(/\s+/g, '')
+  const seqLen     = seqClean.length
+  const valid      = seqLen >= 23
+  const longSeq    = seqLen > 3000   // offline JS fallback disabled above this length
 
   const toggleCell = (ct) =>
     setSelectedCells(prev => prev.includes(ct) ? prev.filter(c => c !== ct) : [...prev, ct])
@@ -60,8 +61,13 @@ export default function SequenceInputCard({ onPredict, loading, error }) {
                        focus:outline-none focus:border-primary transition-colors"
             spellCheck={false}
           />
-          <div className="absolute bottom-3 right-4 text-xs text-on-surface-variant tabular-nums select-none">
-            {seqLen} bp
+          <div className="absolute bottom-3 right-4 flex items-center gap-2 select-none">
+            {longSeq && (
+              <span className="text-xs text-tertiary" title="Sequences > 3000 bp require the backend server — offline mode disabled">
+                backend only
+              </span>
+            )}
+            <span className="text-xs text-on-surface-variant tabular-nums">{seqLen} bp</span>
           </div>
         </div>
         <button

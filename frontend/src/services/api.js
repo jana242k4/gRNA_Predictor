@@ -5,11 +5,19 @@ const BASE_URL = import.meta.env.VITE_API_BASE_URL || 'http://localhost:8000/api
 
 const apiClient = axios.create({
   baseURL: BASE_URL,
-  timeout: 90000,
+  timeout: 180000,   // 3 min — large sequences (>3000 bp) need time on HF Spaces
   headers: { 'Content-Type': 'application/json' },
 })
 
-const OFFLINE_CODES = new Set(['ERR_NETWORK', 'ECONNREFUSED', 'ECONNABORTED', 'ERR_BAD_RESPONSE'])
+// Only true network-down errors fall back to JS inference.
+// Timeouts (ECONNABORTED) and bad responses surface as errors — they mean
+// the backend is reachable but slow/overloaded; running in-browser XGBoost
+// on a large sequence causes an OOM crash.
+const OFFLINE_CODES = new Set(['ERR_NETWORK', 'ECONNREFUSED'])
+
+// Sequences longer than this are refused for offline inference — the in-browser
+// XGBoost model (572 KB JSON) uses too much heap for large candidate sets.
+const OFFLINE_MAX_BP = 3000
 
 export async function predictGRNAs(sequence, pam = 'NGG', topN = 5, targetPosition = null, proximityWeight = 0.4) {
   const body = {
@@ -25,10 +33,26 @@ export async function predictGRNAs(sequence, pam = 'NGG', topN = 5, targetPositi
     const response = await apiClient.post('/predict', body)
     return response.data
   } catch (err) {
-    if (OFFLINE_CODES.has(err.code) || err.code?.startsWith('ERR_NETWORK')) {
-      console.info('[gRNA Predictor] Backend unreachable — using in-browser XGBoost JS inference')
+    const isNetworkDown = OFFLINE_CODES.has(err.code) || err.code?.startsWith('ERR_NETWORK')
+    if (isNetworkDown) {
+      if (body.sequence.length > OFFLINE_MAX_BP) {
+        throw new Error(
+          `Sequence is ${body.sequence.length} bp — offline inference is limited to ${OFFLINE_MAX_BP} bp ` +
+          `to avoid browser memory crashes. The prediction server (Hugging Face Spaces) may be starting ` +
+          `up; please wait ~30 seconds and try again.`
+        )
+      }
+      console.info('[OmicsCRISPR] Backend unreachable — using in-browser XGBoost JS inference')
       const tgt = body.target_position ?? null
       return predictOffline(body.sequence, pam, topN, tgt, proximityWeight, import.meta.env.BASE_URL || '/')
+    }
+    // Timeout: backend is alive but slow (large sequence, cold start).
+    if (err.code === 'ECONNABORTED') {
+      throw new Error(
+        'The prediction server is taking longer than expected. ' +
+        'This can happen with long sequences or after a cold start. ' +
+        'Please try again in a few seconds.'
+      )
     }
     throw err
   }
